@@ -774,6 +774,13 @@ public:
 	float lightingEffect1 = 0.0;
 	float lightingEffect2 = 1.0;
 
+    // Skyrim PBR properties
+    float specularLevel = 0.04;
+    float roughnessScale = 1;
+    float displacementScale = 0.2;
+    float thickness = 1;
+    Color3 subsurfaceColor = Color3(1, 1, 1);
+
 	// Multi-layer properties
 	float innerThickness = 1.0;
 	UVScale innerTextureScale;

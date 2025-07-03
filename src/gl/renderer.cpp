@@ -69,6 +69,83 @@ static const QString cube_fo4 = "textures/shared/cubemaps/mipblur_defaultoutside
 static const QString grayCube = "#FF555555c";
 static const QString pbr_lut_sf = "#sfpbr.dds";
 
+const char * const Renderer::Program::uniforms[NUM_UNIFORM_TYPES] = {
+	"BaseMap",	// SAMP_BASE
+	"NormalMap",	// SAMP_NORMAL
+	"SpecularMap",	// SAMP_SPECULAR
+	"ReflMap",	// SAMP_REFLECTIVITY
+	"LightingMap",	// SAMP_LIGHTING
+	"CubeMap",	// SAMP_CUBE
+	"CubeMap2",	// SAMP_CUBE_2
+	"EnvironmentMap",	// SAMP_ENV_MASK
+	"GlowMap",	// SAMP_GLOW
+	"HeightMap",	// SAMP_HEIGHT
+	"GreyscaleMap",	// SAMP_GRAYSCALE
+	"DetailMask",	// SAMP_DETAIL
+	"TintMask",	// SAMP_TINT
+	"LightMask",	// SAMP_LIGHT
+	"BacklightMap",	// SAMP_BACKLIGHT
+	"InnerMap",	// SAMP_INNER
+	"alpha",	// ALPHA
+	"doubleSided",	// DOUBLE_SIDE
+	"envReflection",	// ENV_REFLECTION
+	"falloffDepth",	// FALL_DEPTH
+	"falloffParams",	// FALL_PARAMS
+	"greyscaleAlpha",	// G2P_ALPHA
+	"greyscaleColor",	// G2P_COLOR
+	"paletteScale",	// G2P_SCALE
+	"glowColor",	// GLOW_COLOR
+	"glowMult",	// GLOW_MULT
+	"hasEmit",	// HAS_EMIT
+	"hasBacklight",	// HAS_MAP_BACK
+	"hasSourceTexture",	// HAS_MAP_BASE
+	"hasCubeMap",	// HAS_MAP_CUBE
+	"hasDetailMask",	// HAS_MAP_DETAIL
+	"hasGreyscaleMap",	// HAS_MAP_G2P
+	"hasGlowMap",	// HAS_MAP_GLOW
+	"hasHeightMap",	// HAS_MAP_HEIGHT
+	"hasNormalMap",	// HAS_MAP_NORMAL
+	"hasSpecularMap",	// HAS_MAP_SPEC
+	"hasTintMask",	// HAS_MAP_TINT
+	"hasEnvMask",	// HAS_MASK_ENV
+	"hasRGBFalloff",	// HAS_RGBFALL
+	"hasRimlight",	// HAS_RIM
+	"hasSoftlight",	// HAS_SOFT
+	"hasTintColor",	// HAS_TINT_COLOR
+	"hasWeaponBlood",	// HAS_WEAP_BLOOD
+	"innerScale",	// INNER_SCALE
+	"innerThickness",	// INNER_THICK
+	"lightingEffect1",	// LIGHT_EFF1
+	"lightingEffect2",	// LIGHT_EFF2
+	"lightingInfluence",	// LIGHT_INF
+	"viewMatrix",	// MAT_VIEW
+	"worldMatrix",	// MAT_WORLD
+	"outerReflection",	// OUTER_REFL
+	"outerRefraction",	// OUTER_REFR
+	"backlightPower",	// POW_BACK
+	"fresnelPower",	// POW_FRESNEL
+	"rimPower",	// POW_RIM
+	"hasSpecular",	// HAS_SPECULAR
+	"specColor",	// SPEC_COLOR
+	"specGlossiness",	// SPEC_GLOSS
+	"specStrength",	// SPEC_SCALE
+	"subsurfaceRolloff",	// SS_ROLLOFF
+	"tintColor",	// TINT_COLOR
+	"useFalloff",	// USE_FALLOFF
+	"uvOffset",	// UV_OFFSET
+	"uvScale",	// UV_SCALE
+	"isSkinned",	// SKINNED
+	"isGPUSkinned",	// GPU_SKINNED
+	"boneTransforms",	// GPU_BONES
+	"isWireframe",	// WIREFRAME
+	"solidColor",	// SOLID_COLOR
+    "fLumEmittance",	// LUM_EMIT
+    "specularLevel",	// SPEC_LEVEL
+    "roughnessScale",	// ROUGH_SCALE
+    "displacementScale",	// DISP_SCALE
+    "thickness", // THICKNESS
+    "subsurfaceColor", // SUBSURF_COLOR
+};
 
 Renderer::Renderer( QOpenGLContext * c )
 	: NifSkopeOpenGLContext( c )
@@ -158,6 +235,294 @@ NifSkopeOpenGLContext::Program * Renderer::setupProgram( Shape * mesh, Program *
 	useProgram( "default.prog" );
 	setupFixedFunction( mesh );
 	return currentProgram;
+}
+
+void Renderer::stopProgram()
+{
+	if ( shader_ready ) {
+		fn->glUseProgram( 0 );
+	}
+
+	int	numTex = fixedFuncTexUnits;
+	fixedFuncTexUnits = 0;
+	resetTextureUnits( numTex );
+}
+
+void Renderer::Program::uni1f( UniformType var, float x )
+{
+	f->glUniform1f( uniformLocations[var], x );
+}
+
+void Renderer::Program::uni2f( UniformType var, float x, float y )
+{
+	f->glUniform2f( uniformLocations[var], x, y );
+}
+
+void Renderer::Program::uni3f( UniformType var, float x, float y, float z )
+{
+	f->glUniform3f( uniformLocations[var], x, y, z );
+}
+
+void Renderer::Program::uni4f( UniformType var, float x, float y, float z, float w )
+{
+	f->glUniform4f( uniformLocations[var], x, y, z, w );
+}
+
+void Renderer::Program::uni1i( UniformType var, int val )
+{
+	f->glUniform1i( uniformLocations[var], val );
+}
+
+void Renderer::Program::uni3m( UniformType var, const Matrix & val )
+{
+	if ( uniformLocations[var] >= 0 )
+		f->glUniformMatrix3fv( uniformLocations[var], 1, 0, val.data() );
+}
+
+void Renderer::Program::uni4m( UniformType var, const Matrix4 & val )
+{
+	if ( uniformLocations[var] >= 0 )
+		f->glUniformMatrix4fv( uniformLocations[var], 1, 0, val.data() );
+}
+
+bool Renderer::Program::uniSampler( BSShaderLightingProperty * bsprop, UniformType var,
+									int textureSlot, int & texunit, const QString & alternate,
+									uint clamp, const QString & forced )
+{
+	GLint uniSamp = uniformLocations[var];
+	if ( uniSamp < 0 )
+		return true;
+	if ( !activateTextureUnit( texunit ) )
+		return false;
+
+	// TODO: On stream 155 bsprop->fileName can reference incorrect strings because
+	// the BSSTS is not filled out nor linked from the BSSP
+	do {
+		if ( !forced.isEmpty() && bsprop->bind( forced, true, TexClampMode(clamp) ) )
+			break;
+		if ( textureSlot >= 0 ) {
+			QString	fname = bsprop->fileName( textureSlot );
+			if ( !fname.isEmpty() && bsprop->bind( fname, false, TexClampMode(clamp) ) )
+				break;
+		}
+		if ( !alternate.isEmpty() && bsprop->bind( alternate, false, TexClampMode::WRAP_S_WRAP_T ) )
+			break;
+		const QString *	fname = &black;
+		if ( textureSlot == 0 )
+			fname = &white;
+		else if ( textureSlot == 1 )
+			fname = ( bsprop->bsVersion < 151 ? &default_n : &default_ns );
+		else if ( textureSlot >= 8 && bsprop->bsVersion >= 151 )
+			fname = ( textureSlot == 8 ? &reflectivity : &lighting );
+		if ( bsprop->bind( *fname, true, TexClampMode::WRAP_S_WRAP_T ) )
+			break;
+
+		return false;
+	} while ( false );
+
+	f->glUniform1i( uniSamp, texunit++ );
+	return true;
+}
+
+inline Renderer::Program::UniformLocationMapItem::UniformLocationMapItem( const char *s, int argsX16Y16 )
+	: fmt( s ), args( std::uint32_t(argsX16Y16) ), l( -1 )
+{
+}
+
+inline bool Renderer::Program::UniformLocationMapItem::operator==( const UniformLocationMapItem & r ) const
+{
+	return ( fmt == r.fmt && args == r.args );
+}
+
+inline std::uint32_t Renderer::Program::UniformLocationMapItem::hashFunction() const
+{
+	// note: this requires fmt to point to a string literal
+	std::uint64_t	tmp = reinterpret_cast< std::uintptr_t >( fmt ) ^ ( std::uint64_t( args ) << 32 );
+	std::uint32_t	h = 0xFFFFFFFFU;
+	hashFunctionCRC32C< std::uint64_t >( h, tmp );
+	return h;
+}
+
+int Renderer::Program::storeUniformLocation( const UniformLocationMapItem & o, size_t i )
+{
+	const char *	fmt = o.fmt;
+	int	arg1 = int( o.args & 0xFFFF );
+	int	arg2 = int( o.args >> 16 );
+
+	char	varNameBuf[256];
+	char *	sp = varNameBuf;
+	char *	endp = sp + 254;
+	while ( sp < endp ) [[likely]] {
+		char	c = *( fmt++ );
+		if ( (unsigned char) c > (unsigned char) '%' ) [[likely]] {
+			*( sp++ ) = c;
+			continue;
+		}
+		if ( !c )
+			break;
+		if ( c == '%' ) [[likely]] {
+			c = *( fmt++ );
+			if ( c == 'd' ) {
+				int	n = arg1;
+				arg1 = arg2;
+				if ( n >= 10 ) {
+					c = char( (n / 10) & 15 ) | '0';
+					*( sp++ ) = c;
+					n = n % 10;
+				}
+				c = char( n & 15 ) | '0';
+			} else if ( c != '%' ) {
+				break;
+			}
+		}
+		*( sp++ ) = c;
+	}
+	*sp = '\0';
+	int	l = f->glGetUniformLocation( id, varNameBuf );
+	uniLocationsMap[i] = o;
+	uniLocationsMap[i].l = l;
+	if ( l < 0 )
+		std::fprintf( stderr, "[Warning] Uniform '%s' not found\n", varNameBuf );
+
+	uniLocationsMapSize++;
+	if ( ( uniLocationsMapSize * size_t(3) ) > ( uniLocationsMapMask * size_t(2) ) ) {
+		unsigned int	m = ( uniLocationsMapMask << 1 ) | 0xFFU;
+		UniformLocationMapItem *	tmpBuf = new UniformLocationMapItem[m + 1U];
+		for ( size_t j = 0; j <= uniLocationsMapMask; j++ ) {
+			size_t	k = uniLocationsMap[j].hashFunction() & m;
+			while ( tmpBuf[k].fmt )
+				k = ( k + 1 ) & m;
+			tmpBuf[k] = uniLocationsMap[j];
+		}
+		delete[] uniLocationsMap;
+		uniLocationsMap = tmpBuf;
+		uniLocationsMapMask = m;
+	}
+
+	return l;
+}
+
+int Renderer::Program::uniLocation( const char * fmt, int argsX16Y16 )
+{
+	UniformLocationMapItem	key( fmt, argsX16Y16 );
+
+	size_t	hashMask = uniLocationsMapMask;
+	size_t	i = key.hashFunction() & hashMask;
+	for ( ; uniLocationsMap[i].fmt; i = (i + 1) & hashMask ) {
+		if ( uniLocationsMap[i] == key )
+			return uniLocationsMap[i].l;
+	}
+
+	return storeUniformLocation( key, i );
+}
+
+void Renderer::Program::uni1i( const char * name, int x )
+{
+	UniformLocationMapItem	key( name, 0 );
+
+	size_t	hashMask = uniLocationsMapMask;
+	size_t	i = key.hashFunction() & hashMask;
+	for ( ; uniLocationsMap[i].fmt; i = (i + 1) & hashMask ) {
+		if ( uniLocationsMap[i] == key ) {
+			f->glUniform1i( uniLocationsMap[i].l, x );
+			return;
+		}
+	}
+
+	f->glUniform1i( storeUniformLocation( key, i ), x );
+}
+
+void Renderer::Program::uni1f( const char * name, float x )
+{
+	UniformLocationMapItem	key( name, 0 );
+
+	size_t	hashMask = uniLocationsMapMask;
+	size_t	i = key.hashFunction() & hashMask;
+	for ( ; uniLocationsMap[i].fmt; i = (i + 1) & hashMask ) {
+		if ( uniLocationsMap[i] == key ) {
+			f->glUniform1f( uniLocationsMap[i].l, x );
+			return;
+		}
+	}
+
+	f->glUniform1f( storeUniformLocation( key, i ), x );
+}
+
+void Renderer::Program::uni1b_l( int l, bool x )
+{
+	f->glUniform1i( l, int(x) );
+}
+
+void Renderer::Program::uni1i_l( int l, int x )
+{
+	f->glUniform1i( l, x );
+}
+
+void Renderer::Program::uni1f_l( int l, float x )
+{
+	f->glUniform1f( l, x );
+}
+
+void Renderer::Program::uni2f_l( int l, float x, float y )
+{
+	f->glUniform2f( l, x, y );
+}
+
+void Renderer::Program::uni4f_l( int l, FloatVector4 x )
+{
+	f->glUniform4f( l, x[0], x[1], x[2], x[3] );
+}
+
+void Renderer::Program::uni4srgb_l( int l, FloatVector4 x )
+{
+	x = DDSTexture16::srgbExpand( x );
+	f->glUniform4f( l, x[0], x[1], x[2], x[3] );
+}
+
+void Renderer::Program::uni4c_l( int l, std::uint32_t c, bool isSRGB )
+{
+	FloatVector4	x(c);
+	x *= 1.0f / 255.0f;
+	if ( isSRGB )
+		x = DDSTexture16::srgbExpand( x );
+	f->glUniform4f( l, x[0], x[1], x[2], x[3] );
+}
+
+void Renderer::Program::uni1bv_l( int l, const bool * x, size_t n )
+{
+	n = std::min< size_t >( n, 64 );
+	GLint	tmp[64];
+	for ( size_t i = 0; i < n; i++ )
+		tmp[i] = GLint( x[i] );
+	f->glUniform1iv( l, GLsizei(n), tmp );
+}
+
+void Renderer::Program::uni1iv_l( int l, const int * x, size_t n )
+{
+	f->glUniform1iv( l, GLsizei(n), x );
+}
+
+void Renderer::Program::uni1fv_l( int l, const float * x, size_t n )
+{
+	f->glUniform1fv( l, GLsizei(n), x );
+}
+
+void Renderer::Program::uni4fv_l( int l, const FloatVector4 * x, size_t n )
+{
+	f->glUniform4fv( l, GLsizei(n), &(x[0][0]) );
+}
+
+void Renderer::Program::uniSampler_l( int l, int firstTextureUnit, int textureCnt, int arraySize )
+{
+	arraySize = std::min< int >( arraySize, TexCache::maxTextureUnits );
+	textureCnt = std::min< int >( textureCnt, arraySize );
+	GLint	tmp[TexCache::maxTextureUnits];
+	int	i;
+	for ( i = 0; i < textureCnt; i++ )
+		tmp[i] = firstTextureUnit + i;
+	for ( ; i < arraySize; i++ )
+		tmp[i] = firstTextureUnit;
+    f->glUniform1iv( l, arraySize, tmp );
 }
 
 static int setFlipbookParameters( const CE2Material::Material & m, FloatVector4 & uvScaleAndOffset )
@@ -753,6 +1118,13 @@ bool Renderer::setupProgramCE1( const NifModel * nif, Program * prog, Shape * me
 				prog->uni4f( "translucencyColorAndScale", translucencyColorAndScale );
 			}
 		}
+
+        // Skyrim PBR
+        prog->uni1f(SPEC_LEVEL, lsp->specularLevel);
+        prog->uni1f(ROUGH_SCALE, lsp->roughnessScale);
+        prog->uni1f(DISP_SCALE, lsp->displacementScale);
+        prog->uni1f(THICKNESS, lsp->thickness);
+        prog->uni3f(SUBSURF_COLOR, lsp->subsurfaceColor.red(), lsp->subsurfaceColor.green(), lsp->subsurfaceColor.blue());
 
 		// Multi-Layer
 

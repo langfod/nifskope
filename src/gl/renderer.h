@@ -65,7 +65,93 @@ public:
 	~Renderer();
 
 	//! Set up shader program
-	Program * setupProgram( Shape *, Program * hint = nullptr );
+	QString setupProgram( Shape *, const QString & hint = {} );
+	//! Stop shader program
+	void stopProgram();
+
+	typedef enum
+	{
+		// Samplers
+		SAMP_BASE = 0,
+		SAMP_NORMAL,
+		SAMP_SPECULAR,
+		SAMP_REFLECTIVITY,
+		SAMP_LIGHTING,
+		SAMP_CUBE,
+		SAMP_CUBE_2,
+		SAMP_ENV_MASK,
+		SAMP_GLOW,
+		SAMP_HEIGHT,
+		SAMP_GRAYSCALE,
+		SAMP_DETAIL,
+		SAMP_TINT,
+		SAMP_LIGHT,
+		SAMP_BACKLIGHT,
+		SAMP_INNER,
+		// Uniforms
+		ALPHA,
+		DOUBLE_SIDE,
+		ENV_REFLECTION,
+		FALL_DEPTH,
+		FALL_PARAMS,
+		G2P_ALPHA,
+		G2P_COLOR,
+		G2P_SCALE,
+		GLOW_COLOR,
+		GLOW_MULT,
+		HAS_EMIT,
+		HAS_MAP_BACK,
+		HAS_MAP_BASE,
+		HAS_MAP_CUBE,
+		HAS_MAP_DETAIL,
+		HAS_MAP_G2P,
+		HAS_MAP_GLOW,
+		HAS_MAP_HEIGHT,
+		HAS_MAP_NORMAL,
+		HAS_MAP_SPEC,
+		HAS_MAP_TINT,
+		HAS_MASK_ENV,
+		HAS_RGBFALL,
+		HAS_RIM,
+		HAS_SOFT,
+		HAS_TINT_COLOR,
+		HAS_WEAP_BLOOD,
+		INNER_SCALE,
+		INNER_THICK,
+		LIGHT_EFF1,
+		LIGHT_EFF2,
+		LIGHT_INF,
+		MAT_VIEW,
+		MAT_WORLD,
+		OUTER_REFL,
+		OUTER_REFR,
+		POW_BACK,
+		POW_FRESNEL,
+		POW_RIM,
+		HAS_SPECULAR,
+		SPEC_COLOR,
+		SPEC_GLOSS,
+		SPEC_SCALE,
+		SS_ROLLOFF,
+		TINT_COLOR,
+		USE_FALLOFF,
+		UV_OFFSET,
+		UV_SCALE,
+		SKINNED,
+		GPU_SKINNED,
+		GPU_BONES,
+		WIREFRAME,
+		SOLID_COLOR,
+		LUM_EMIT,
+
+        SPEC_LEVEL,
+        ROUGH_SCALE,
+        DISP_SCALE,
+        THICKNESS,
+        SUBSURF_COLOR,
+
+		NUM_UNIFORM_TYPES
+	} UniformType;
 
 public slots:
 	void updateSettings();
