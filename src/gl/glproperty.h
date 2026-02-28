@@ -785,6 +785,13 @@ public:
 	float rimPower = 2.0;
 	float backlightPower = 0.0;
 
+	// Skyrim PBR properties
+	float specularLevel = 0.04;
+	float roughnessScale = 1;
+	float displacementScale = 0.2;
+	float thickness = 1;
+	Color3 subsurfaceColor = Color3(1, 1, 1);
+
 protected:
 	void setController( const NifModel * nif, const QModelIndex & controller ) override final;
 	void updateImpl( const NifModel * nif, const QModelIndex & block ) override;

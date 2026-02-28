@@ -1,14 +1,20 @@
-# multi-layer parallax
+# TruePBR
 
 # Skyrim
 check BSVersion >= 83
 check BSVersion <= 100
 check BSLightingShaderProperty
-check BSLightingShaderProperty/Shader Type == 11
-check not BSLightingShaderProperty/Shader Flags 2 & 0x800000
+check BSLightingShaderProperty/Shader Flags 2 & 0x800000
 checkgroup begin or
 	check NiTriBasedGeomData/Has Normals == 1
 	check BSTriShape/Vertex Desc & 0x800000000000
 checkgroup end
 
-shaders sk_default.vert sk_multilayer.frag
+texcoords 0 base
+texcoords 1 tangents
+texcoords 2 bitangents
+texcoords 3 indices
+texcoords 4 weights
+
+shaders sk_default.vert sk_pbr.frag
+

@@ -1344,6 +1344,13 @@ void BSLightingShaderProperty::resetParams()
 	paletteScale = 1.0;
 	rimPower = 2.0;
 	backlightPower = 0.0;
+
+	// Skyrim PBR properties
+	specularLevel = 0.04;
+	roughnessScale = 1;
+	displacementScale = 0.2;
+	thickness = 1;
+	subsurfaceColor = Color3(1, 1, 1);
 }
 
 void BSLightingShaderProperty::updateParams( const NifModel * nif )
@@ -1458,7 +1465,7 @@ void BSLightingShaderProperty::updateParams( const NifModel * nif )
 			innerTextureScale.set( nif->get<Vector2>(lsp, "Parallax Inner Layer Texture Scale") );
 
 			hasSpecularMap = hasSF1( ShaderFlags::SLSF1_Specular ) && !textures.value( 7, "" ).isEmpty();
-			hasHeightMap = isST( ShaderFlags::ST_Heightmap ) && hasSF1( ShaderFlags::SLSF1_Parallax ) && !textures.value( 3, "" ).isEmpty();
+			hasHeightMap = (isST( ShaderFlags::ST_Heightmap ) && hasSF1( ShaderFlags::SLSF1_Parallax ) || hasSF2(ShaderFlags::SLSF2_Unused01)) && !textures.value( 3, "" ).isEmpty();
 			hasBacklight = hasSF2( ShaderFlags::SLSF2_Back_Lighting );
 			hasRimlight = hasSF2( ShaderFlags::SLSF2_Rim_Lighting );
 			hasSoftlight = hasSF2( ShaderFlags::SLSF2_Soft_Lighting );
@@ -1480,6 +1487,13 @@ void BSLightingShaderProperty::updateParams( const NifModel * nif )
 			backlightPower = nif->get<float>( lsp, "Backlight Power" );
 			fresnelPower = nif->get<float>( lsp, "Fresnel Power" );
 		}
+
+		// Skyrim PBR properties
+		specularLevel = nif->get<float>( lsp, "Specular Level" );
+		roughnessScale = nif->get<float>( lsp, "Roughness Scale" );
+		displacementScale = nif->get<float>( lsp, "Displacement Scale" );
+		thickness = nif->get<float>( lsp, "Subsurface Opacity" );
+		subsurfaceColor = nif->get<Color3>( lsp, "Subsurface Color" );
 
 		// Environment Map, Mask and Reflection Scale
 		hasEnvironmentMap =
