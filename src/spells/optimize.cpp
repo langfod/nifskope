@@ -94,10 +94,10 @@ public:
 
 			if ( !map.isEmpty() ) {
 				numRemoved += map.count();
-				nif->mapLinks( map );
 				QList<qint32> l = map.keys();
 				std::sort( l.begin(), l.end(), std::greater<qint32>() );
 				nif->setState( BaseModel::Loading );
+				nif->mapLinks( map );
 				for ( const auto b : l ) {
 					nif->removeNiBlock( b );
 				}
@@ -224,7 +224,17 @@ public:
 
 				if ( iNode.isValid() ) {
 					if ( nif->getChildLinks( b ).isEmpty() && nif->getParentLinks( b ).isEmpty() ) {
-						int x = int( nif->isNiBlock( nif->getBlockIndex( b ), "BSValueNode" ) );
+						int x = int( nif->isNiBlock( iNode, { "BSBlastNode", "BSDamageStage", "BSDebrisNode",
+																"BSValueNode" } ) );
+						if ( !x && nif->getBSVersion() >= 14 ) {
+							if ( auto blkName = nif->get<QString>( iNode, "Name" );
+									blkName == "ProjectileNode"
+									|| ( nif->getBSVersion() < 83
+										&& ( blkName == "ShellCasingNode" || blkName == "##SightingNode" ) )
+									|| ( nif->getBSVersion() >= 130 && blkName == "WorkshopConnectPoints" ) ) {
+								x = 1;
+							}
+						}
 
 						for ( int c = 0; c < nif->getBlockCount(); c++ ) {
 							if ( c != b ) {

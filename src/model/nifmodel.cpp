@@ -1367,6 +1367,17 @@ QVariant NifModel::data( const QModelIndex & index, int role ) const
 							return item->getValueAsString();
 
 						return optId;
+					} else if ( item->isCompound() && !item->isArray() && item->hasName( "Bone List" ) ) {
+						if ( int p = getParent( getBlockNumber( item ) ); p >= 0 ) {
+							if ( auto i = getBlockIndex( p );
+									i.isValid() && ( i = getIndex( i, "Bones" ) ).isValid() ) {
+								if ( isArray( i ) && rowCount( i ) > index.row() ) {
+									// TODO: Starfield SkinAttach support
+									if ( auto j = getBlockIndex( getLink( i, index.row() ) ); j.isValid() )
+										return get<QString>( j, "Name" );
+								}
+							}
+						}
 					}
 
 					return item->getValueAsString().replace( "\n", SPACE_QSTRING ).replace( "\r", SPACE_QSTRING );
@@ -1865,7 +1876,7 @@ bool NifModel::load( QIODevice & device, const char* fileName )
 	QSettings settings;
 	bool ignoreSize = settings.value( "Ignore Block Size", true ).toBool();
 	bool convertSFMeshes =
-		settings.value( "Settings/Nif/Convert meshes to internal geometry on load", false ).toBool();
+		settings.value( "Settings/Importex/Convert meshes to internal geometry on load", false ).toBool();
 
 	clear();
 
@@ -2638,6 +2649,7 @@ void NifModel::updateLinks( int block, NifItem * parent )
 	if ( !parent )
 		return;
 
+	int n = 0;
 	for ( int l : parent->getLinkRows() ) {
 		NifItem * c = parent->child( l );
 		if ( !c )
@@ -2653,9 +2665,23 @@ void NifModel::updateLinks( int block, NifItem * parent )
 			if ( c->valueType() == NifValue::tUpLink ) {
 				if ( !parentLinks[block].contains( i ) )
 					parentLinks[block].append( i );
-			} else {
-				if ( !childLinks[block].contains( i ) )
-					childLinks[block].append( i );
+			} else if ( auto & cl = childLinks[block]; !cl.contains( i ) ) {
+				cl.append( i );
+
+				// Move the Data link to before Skin Instance and properties in NiParticleSystem (Skyrim SE and newer)
+				//   Row 25: Skin Instance
+				//   Row 26: Skin Instance
+				//   Row 29: Shader Property
+				//   Row 30: Alpha Property
+				//   Row 36: Data
+				if ( ( 1ull << l ) & 0x001066000000ull ) {
+					if ( l == 36 ) {
+						if ( n > 0 && bsVersion >= 100 && blockInherits( parent, "NiParticleSystem" ) )
+							cl.move( cl.size() - 1, cl.size() - ( n + 1 ) );
+					} else {
+						n++;
+					}
+				}
 			}
 		}
 	}

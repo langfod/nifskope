@@ -18,7 +18,6 @@
 #include <QApplication>
 #include <QBuffer>
 #include <QDir>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QIODevice>
 #include <QImage>
@@ -26,6 +25,9 @@
 #include <QMessageBox>
 
 #define tr( x ) QApplication::tr( x )
+
+// defined in importex.cpp
+QString getImportexFileName( const NifModel * nif, const char * fileType, bool isImport );
 
 static bool	gltfEnableLOD = false;
 
@@ -79,7 +81,7 @@ public:
 	void createInverseBoneMatrices( QByteArray & bin, const Shape * bsmesh, int gltfSkinID ) const;
 	std::string getMaterialName( const QModelIndex & index ) const;
 	std::string getMaterialPath( const QModelIndex & index ) const;
-	bool createNodes( const Scene * scene, QByteArray & bin );
+	bool createNodes( const Scene * scene, QByteArray & bin, const QModelIndex & rootNode );
 	void createPrimitive( QByteArray & bin, const MeshFile * mesh, tinygltf::Primitive & prim,
 							std::string attr, int count, int componentType, int type, quint32 & attributeIndex );
 	static void meshFileFromShape( MeshFile & mesh, const Shape * shape );
@@ -210,7 +212,7 @@ std::string GltfStore::getMaterialPath( const QModelIndex & index ) const
 	return getMaterialName( index );
 }
 
-bool GltfStore::createNodes( const Scene * scene, QByteArray & bin )
+bool GltfStore::createNodes( const Scene * scene, QByteArray & bin, const QModelIndex & rootNode )
 {
 	int gltfNodeID = 0;
 	int gltfSkinID = -1;
@@ -224,8 +226,29 @@ bool GltfStore::createNodes( const Scene * scene, QByteArray & bin )
 
 		auto nodeId = node->id();
 		auto iBlock = nif->getBlockIndex(nodeId);
-		if ( !nif->blockInherits(iBlock, { "NiNode", "BSGeometry", "BSTriShape" }) )
+		if ( !nif->blockInherits(iBlock, { "NiNode", "BSGeometry", "BSTriShape", "NiTriShape" }) )
 			continue;
+		bool isRootNode = bool( node->parentNode() );
+		if ( rootNode.isValid() ) {
+			int	rootNodeNum = nif->getBlockNumber( rootNode );
+			bool	foundParent = false;
+			for ( auto i = node; i; i = i->parentNode() ) {
+				if ( i->id() == rootNodeNum ) {
+					foundParent = true;
+					break;
+				}
+			}
+			if ( !foundParent )
+				continue;
+			isRootNode = ( nodeId == rootNodeNum );
+		}
+		if ( isRootNode ) {
+			if ( model.scenes.empty() ) {
+				model.scenes.resize( 1 );
+				model.scenes.front().name = "ExportScene";
+			}
+			model.scenes.front().nodes.push_back( int(model.nodes.size()) );
+		}
 
 		auto gltfNode = tinygltf::Node();
 		auto mesh = dynamic_cast<Shape *>(node);
@@ -314,6 +337,8 @@ bool GltfStore::createNodes( const Scene * scene, QByteArray & bin )
 		auto iBlock = nif->getBlockIndex(i);
 
 		if ( nif->blockInherits(iBlock, "NiNode") ) {
+			if ( !nodes.contains( i ) )
+				continue;
 			auto children = nif->getChildLinks(i);
 			for ( const auto& child : children ) {
 				auto nodeList = nodes.value(child, {});
@@ -1292,38 +1317,14 @@ void GltfStore::exportMaterial( tinygltf::Material & mat, const std::string & ma
 }
 
 
-static QString getGltfFolder( const NifModel * nif )
+void exportGltf( const NifModel * nif, const Scene * scene, const QModelIndex & index )
 {
-	QString	dirName = nif->getFolder();
-	if ( !( dirName.isEmpty() || dirName.contains( ".ba2/", Qt::CaseInsensitive ) || dirName.contains( ".bsa/", Qt::CaseInsensitive ) ) )
-		return dirName;
-	QSettings	settings;
-	return settings.value( "Spells//Extract File/Last File Path", QString() ).toString();
-}
-
-void exportGltf( const NifModel * nif, const Scene * scene, [[maybe_unused]] const QModelIndex & index )
-{
-	QString	filename = getGltfFolder( nif );
-	if ( auto w = qobject_cast< const NifSkope * >( nif->getWindow() ); w ) {
-		if ( auto nifPath = w->getCurrentFile(); !nifPath.isEmpty() ) {
-			if ( nifPath.endsWith( QLatin1StringView(".nif"), Qt::CaseInsensitive )
-				|| nifPath.endsWith( QLatin1StringView(".bto"), Qt::CaseInsensitive )
-				|| nifPath.endsWith( QLatin1StringView(".btr"), Qt::CaseInsensitive ) ) {
-				nifPath.chop( 4 );
-			}
-#ifdef Q_OS_WIN32
-			nifPath.replace( QChar('\\'), QChar('/') );
-#endif
-			nifPath.remove( 0, nifPath.lastIndexOf( QChar('/') ) + 1 );
-			if ( !nifPath.isEmpty() ) {
-				if ( !filename.isEmpty() && !filename.endsWith( QChar('/') ) )
-					filename.append( QChar('/') );
-				filename.append( nifPath );
-				filename.append( QLatin1StringView(".gltf") );
-			}
-		}
+	if ( index.isValid() && !nif->blockInherits(index, { "NiNode", "BSGeometry", "BSTriShape", "NiTriShape" }) ) {
+		QMessageBox::critical( nullptr, "NifSkope error", tr( "glTF export requires selecting a node or shape" ) );
+		return;
 	}
-	filename = QFileDialog::getSaveFileName(qApp->activeWindow(), tr("Choose a .glTF file for export"), filename, "glTF (*.gltf)");
+
+	QString filename = getImportexFileName( nif, "glTF", false );
 	bool	useFullMatPaths;
 	int	textureMipLevel;
 	if ( filename.isEmpty() ) {
@@ -1333,9 +1334,9 @@ void exportGltf( const NifModel * nif, const Scene * scene, [[maybe_unused]] con
 		if ( nif->getBSVersion() < 170 )
 			gltfEnableLOD = false;
 		else
-			gltfEnableLOD = settings.value( "Settings/Nif/Enable LOD", false ).toBool();
-		useFullMatPaths = settings.value( "Settings/Nif/Export full material paths", true ).toBool();
-		textureMipLevel = settings.value( "Settings/Nif/Gl TF Export Mip Level", 1 ).toInt();
+			gltfEnableLOD = settings.value( "Settings/Importex/Enable LOD", false ).toBool();
+		useFullMatPaths = settings.value( "Settings/Importex/Export full material paths", true ).toBool();
+		textureMipLevel = settings.value( "Settings/Importex/Gl TF Export Mip Level", 1 ).toInt();
 		textureMipLevel = std::min< int >( std::max< int >( textureMipLevel, -1 ), 15 );
 	}
 	if ( !filename.endsWith( ".gltf", Qt::CaseInsensitive ) )
@@ -1350,7 +1351,7 @@ void exportGltf( const NifModel * nif, const Scene * scene, [[maybe_unused]] con
 	GltfStore gltf( const_cast< NifModel * >( nif ), model, textureMipLevel );
 	gltf.materials.emplace( std::string(), std::pair< int, const Shape * >( 0, nullptr ) );
 	QByteArray buffer;
-	bool success = gltf.createNodes( scene, buffer );
+	bool success = gltf.createNodes( scene, buffer, index );
 	if ( success )
 		success = gltf.createMeshes( scene, buffer );
 	if ( success ) {
@@ -1421,7 +1422,7 @@ protected:
 	bool	haveSkins;
 	std::vector< int >	nodeMap;
 	static inline Vector3 fromMeters( const Vector3 & v );
-	bool nodeHasMeshes( const tinygltf::Node & node, int d = 0 ) const;
+	bool nodeHasMeshes( const tinygltf::Node & node, int d = 0, bool isFlat = false ) const;
 	static void normalizeFloats( float * p, size_t n, int dataType );
 	template< typename T > bool loadBuffer( std::vector< T > & outBuf, int accessor, int typeRequired );
 	void applyXYZScale( Transform & t, const Vector3 & scale );
@@ -1451,17 +1452,19 @@ inline Vector3 ImportGltf::fromMeters( const Vector3 & v )
 					float( double( v[2] ) * ( 64.0 / 0.9144 ) ) );
 }
 
-bool ImportGltf::nodeHasMeshes( const tinygltf::Node & node, int d ) const
+bool ImportGltf::nodeHasMeshes( const tinygltf::Node & node, int d, bool isFlat ) const
 {
 	if ( node.mesh >= 0 && size_t(node.mesh) < model.meshes.size() )
 		return secondPass;
 	if ( d >= 1024 )
 		return false;
+	if ( !( isFlat || secondPass ) && nif->getBSVersion() >= 170 )
+		isFlat = ( node.extras.Has( "Flat" ) && node.extras.Get( "Flat" ).Get< bool >() );
 	for ( int i : node.children ) {
-		if ( i >= 0 && size_t(i) < model.nodes.size() && nodeHasMeshes( model.nodes[i], d + 1 ) )
+		if ( i >= 0 && size_t(i) < model.nodes.size() && nodeHasMeshes( model.nodes[i], d + 1, isFlat ) )
 			return true;
 	}
-	if ( secondPass || ( node.extras.Has( "Flat" ) && node.extras.Get( "Flat" ).Get< bool >() ) )
+	if ( isFlat || secondPass )
 		return false;
 	qsizetype	k = qsizetype( &node - model.nodes.data() );
 	for ( const auto & i : model.skins ) {
@@ -1586,12 +1589,7 @@ void ImportGltf::applyXYZScale( Transform & t, const Vector3 & scale )
 	FloatVector4	tmp = FloatVector4( scale ) / avgScale;
 	if ( ( ( ( tmp - 1.0f ).absValues() - 0.000001f ).getSignMask() & 0x07 ) == 0x07 )
 		return;
-	if ( !scaleWarningFlag ) {
-		scaleWarningFlag = true;
-		QMessageBox::warning( nullptr, "NifSkope warning",
-								tr( "glTF model uses anisotropic scaling, use Transform/Apply to fix transforms, "
-									"and recalculate normals and tangents" ) );
-	}
+	scaleWarningFlag = true;
 	t.rotation( 0, 0 ) *= tmp[0];
 	t.rotation( 1, 0 ) *= tmp[0];
 	t.rotation( 2, 0 ) *= tmp[0];
@@ -2405,6 +2403,12 @@ void ImportGltf::importModel( const QPersistentModelIndex & iBlock )
 	}
 	nif->restoreState();
 	nif->updateModel();
+
+	if ( scaleWarningFlag ) {
+		QMessageBox::warning( nullptr, "NifSkope warning",
+								tr( "glTF model uses anisotropic scaling, use Transform/Apply to fix transforms, "
+									"and recalculate normals and tangents" ) );
+	}
 }
 
 static bool dummyImageLoadFunction(
@@ -2417,19 +2421,23 @@ static bool dummyImageLoadFunction(
 
 void importGltf( NifModel * nif, const QModelIndex & index )
 {
-	if ( nif->getBSVersion() < 100 || ( index.isValid() && !nif->blockInherits( index, "NiNode" ) ) ) {
+	if ( nif->getBSVersion() < 100 ) {
+		QMessageBox::critical( nullptr, "NifSkope error", tr( "glTF import: unsupported NIF version" ) );
+		return;
+	}
+	if ( index.isValid() && !nif->blockInherits( index, "NiNode" ) ) {
 		QMessageBox::critical( nullptr, "NifSkope error", tr( "glTF import requires selecting a NiNode" ) );
 		return;
 	}
 
-	QString filename = QFileDialog::getOpenFileName( qApp->activeWindow(), tr("Choose a .glTF file for import"), getGltfFolder(nif), "glTF (*.gltf)" );
+	QString filename = getImportexFileName( nif, "glTF", true );
 	if ( filename.isEmpty() ) {
 		return;
 	} else if ( nif->getBSVersion() < 170 ) {
 		gltfEnableLOD = false;
 	} else {
 		QSettings	settings;
-		gltfEnableLOD = settings.value( "Settings/Nif/Enable LOD", false ).toBool();
+		gltfEnableLOD = settings.value( "Settings/Importex/Enable LOD", false ).toBool();
 	}
 
 	tinygltf::TinyGLTF	reader;
@@ -2437,7 +2445,12 @@ void importGltf( NifModel * nif, const QModelIndex & index )
 	std::string	gltfErr;
 	std::string	gltfWarn;
 	reader.SetImageLoader( dummyImageLoadFunction, nullptr );
-	if ( !reader.LoadASCIIFromFile( &model, &gltfErr, &gltfWarn, filename.toStdString() ) ) {
+	bool	fileImported;
+	if ( filename.endsWith( QLatin1StringView(".glb"), Qt::CaseInsensitive ) )
+		fileImported = reader.LoadBinaryFromFile( &model, &gltfErr, &gltfWarn, filename.toStdString() );
+	else
+		fileImported = reader.LoadASCIIFromFile( &model, &gltfErr, &gltfWarn, filename.toStdString() );
+	if ( !fileImported ) {
 		QMessageBox::critical( nullptr, "NifSkope error", QString("Error importing glTF file: %1").arg(gltfErr.c_str()) );
 		return;
 	}

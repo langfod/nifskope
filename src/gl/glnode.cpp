@@ -679,13 +679,13 @@ void Node::drawTriangleSelection( const QVector<Triangle> & triangles, int i, in
 		return;
 	}
 
-	int	startPos = 0;
-	int	endPos = 0;
+	int	startPos = i;
+	int	endPos = i;
 	for ( ; n > 0; i++, n-- ) {
 		const Triangle &	tri = triangles.at( i );
 		if ( int( tri[0] ) >= startVertex && int( tri[0] ) < endVertex ) {
 			if ( std::min< int >( tri[1], tri[2] ) >= startVertex && std::max< int >( tri[1], tri[2] ) < endVertex ) {
-				endPos++;
+				endPos = i + 1;
 				continue;
 			}
 			qDebug() << "triangle with multiple materials?" << i;
@@ -961,6 +961,9 @@ void Node::drawHvkShape( const NifModel * nif, const QModelIndex & iShape, HvkSh
 		}
 
 	} else if ( name == "bhkCompressedMeshShape" ) {
+		// bhkCompressedMeshShape overrides the scale from parent nodes
+		scene->multModelViewMatrix( Transform( Vector3(),
+												nif->get<Vector4>( iShape, "Scale Copy" )[0] / worldTrans().scale ) );
 		scene->drawCMS( nif, iShape );
 #if 0
 		if ( Options::getHavokState() == HAVOK_SOLID ) {

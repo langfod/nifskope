@@ -200,12 +200,15 @@ bool spSanitizeBlockOrder::isApplicable( const NifModel *, const QModelIndex & i
 bool spSanitizeBlockOrder::childBeforeParent( NifModel * nif, qint32 block )
 {
 	// get index to the block
-	QModelIndex iBlock( nif->getBlockIndex( block ) );
+	const NifItem * iBlock = nif->getBlockItem( block );
+	if ( !iBlock )
+		return false;
 	// check its type
-	return (
-		nif->blockInherits( iBlock, "bhkRefObject" )
-		&& !nif->blockInherits( iBlock, { "bhkConstraint", "bhkAction" } )
-	);
+	if ( nif->blockInherits( iBlock, "bhkRefObject" ) ) {
+		return ( !nif->blockInherits( iBlock, { "bhkConstraint", "bhkAction" } )
+				&& !nif->isNiBlock( iBlock, "bhkBallSocketConstraintChain" ) );
+	}
+	return ( nif->getBSVersion() >= 100 && nif->blockInherits( iBlock, "NiPSysData" ) );
 }
 
 // build the nif tree at node block; the block itself and its children are recursively added to
@@ -218,14 +221,25 @@ void spSanitizeBlockOrder::addTree( NifModel * nif, qint32 block, QList<qint32> 
 
 	// special case: add bhkConstraint entities before bhkConstraint
 	// (these are actually links, not refs)
-	QModelIndex iBlock( nif->getBlockIndex( block ) );
-
-	if ( nif->blockInherits( iBlock, "bhkConstraint" ) ) {
-		for ( const auto entity : nif->getLinkArray( iBlock, "Entities" ) ) {
-			addTree( nif, entity, newblocks );
+	const NifItem * iBlock = nif->getBlockItem( block );
+	if ( !iBlock ) {
+		return;
+	} else {
+		QVector<qint32> entities;
+		if ( nif->blockInherits( iBlock, { "bhkConstraint", "bhkBinaryAction" } ) ) {
+			entities.resize( 2 );
+			entities[0] = nif->getLink( iBlock, "Entity A" );
+			entities[1] = nif->getLink( iBlock, "Entity B" );
+		} else if ( nif->blockInherits( iBlock, "bhkUnaryAction" ) ) {
+			entities.append( nif->getLink( iBlock, "Entity" ) );
+		} else if ( nif->isNiBlock( iBlock, "bhkBallSocketConstraintChain" ) ) {
+			entities = nif->getLinkArray( nif->getItem( iBlock, "Constraint Chain Info" ), "Chained Entities" );
+		} else if ( nif->getBSVersion() >= 100 && nif->blockInherits( iBlock, "NiParticleSystem" ) ) {
+			entities.append( nif->getLink( iBlock, "Data" ) );
 		}
+		for ( const auto entity : entities )
+			addTree( nif, entity, newblocks );
 	}
-
 
 	// add all children of block that should be before block
 	for ( const auto child : nif->getChildLinks( block ) ) {
@@ -279,6 +293,12 @@ QModelIndex spSanitizeBlockOrder::cast( NifModel * nif, const QModelIndex & )
 	nif->reorderBlocks( order );
 
 	return QModelIndex();
+}
+
+QModelIndex spSanitizeBlockOrder::cast_Static( NifModel * nif, const QModelIndex & index )
+{
+	spSanitizeBlockOrder	sp;
+	return sp.cast( nif, index );
 }
 
 REGISTER_SPELL( spSanitizeBlockOrder )

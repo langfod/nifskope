@@ -1,4 +1,5 @@
 #include "blocks.h"
+#include "mesh.h"
 
 #include <QApplication>
 #include <QBuffer>
@@ -553,26 +554,30 @@ void blockFilter( NifModel * nif, std::list<QString>& blocks, const QString & ty
 	blocks.erase( std::remove_if( blocks.begin(), blocks.end(),
 		[nif, type] ( const QString& s ) { return !nif->inherits( s, type )
 			// Obsolete/Undecoded
-			|| s.startsWith( "NiClod" ) || s.startsWith( "NiArk" ) || s.startsWith( "NiBez" )
-			|| s.startsWith( "Ni3ds" ) || s.startsWith( "NiBinaryVox" )
+			|| s.startsWith( QLatin1StringView("NiClod") )
+			|| s.startsWith( QLatin1StringView("NiArk") )
+			|| s.startsWith( QLatin1StringView("NiBez") )
+			|| s.startsWith( QLatin1StringView("Ni3ds") )
+			|| s.startsWith( QLatin1StringView("NiBinaryVox") )
 			// Legacy
 			|| ( ( (nif->inherits( s, "NiParticles" ) && !nif->inherits( s, "NiParticleSystem" ))
-				   || (nif->inherits( s, "NiParticlesData" ) && !s.startsWith( "NiP" )) // NiRotating, NiAutoNormal, etc.
+				   || (nif->inherits( s, "NiParticlesData" ) && !s.startsWith( QLatin1StringView("NiP") )) // NiRotating, NiAutoNormal, etc.
 				   || nif->inherits( s, legacyOnlyBlocks ) )
 				 && nif->getVersionNumber() > 0x0a010000 )
 			// Bethesda
-			|| ( (s.startsWith( "bhk" ) || s.startsWith( "hk" ) || s.startsWith( "BS" )
-				 || s.endsWith( "ShaderProperty" )) && nif->getBSVersion() == 0 )
+			|| ( (s.startsWith( QLatin1StringView("bhk") ) || s.startsWith( QLatin1StringView("hk") )
+					|| s.startsWith( QLatin1StringView("BS") )
+					|| s.endsWith( QLatin1StringView("ShaderProperty") )) && nif->getBSVersion() == 0 )
 			// Introduced in 20.2.0.8
-			|| (( s.startsWith( "NiPhysX" ) && nif->getVersionNumber() < 0x14020008 ))
+			|| (( s.startsWith( QLatin1StringView("NiPhysX") ) && nif->getVersionNumber() < 0x14020008 ))
 			// Introduced in 20.5
-			|| ( ((s.startsWith( "NiPS" ) && !s.contains( "PSys" ))
-					|| (s.startsWith( "NiMesh" ) && !s.startsWith( "NiMeshP" ))
-					|| s.contains( "Evaluator" )
+			|| ( ((s.startsWith( QLatin1StringView("NiPS") ) && !s.contains( QLatin1StringView("PSys") ))
+					|| (s.startsWith( QLatin1StringView("NiMesh") ) && !s.startsWith( QLatin1StringView("NiMeshP") ))
+					|| s.contains( QLatin1StringView("Evaluator") )
 				   ) && nif->getVersionNumber() < 0x14050000 )
 			// Deprecated in 20.5
-			|| ( (s.startsWith( "NiParticle" ) || s.contains( "PSys" ) || s.startsWith( "NiTri" )
-				   || s.contains( "Interpolator" )
+			|| ( (s.startsWith( QLatin1StringView("NiParticle") ) || s.contains( QLatin1StringView("PSys") )
+					|| s.startsWith( QLatin1StringView("NiTri") ) || s.contains( QLatin1StringView("Interpolator") )
 				   ) && nif->getVersionNumber() >= 0x14050000 );
 		} ),
 		blocks.end()
@@ -1856,7 +1861,48 @@ public:
 		if ( newType.isEmpty() )
 			return index;
 
+		QVector<Vector4> dynamicVertexData;
+		if ( btype == "BSDynamicTriShape" ) {
+			if ( auto i = nif->getIndex( index, "Vertices" ); i.isValid() )
+				dynamicVertexData = nif->getArray<Vector4>( i );
+		}
+
 		nif->convertNiBlock( newType, index );
+
+		if ( !dynamicVertexData.isEmpty() ) {
+			auto vertexDesc = nif->get<BSVertexDesc>( index, "Vertex Desc" );
+			vertexDesc.SetFlag( VF_VERTEX );
+			vertexDesc.RemoveFlag( VF_FULLPREC );
+			if ( auto i = nif->getItem( index ); i )
+				i->invalidateCondition();
+			nif->set<BSVertexDesc>( index, "Vertex Desc", vertexDesc );
+		}
+
+		if ( btype == "BSTriShape" || newType == "BSTriShape" )
+			spRemoveWasteVertices::updateBSTriShape( nif, index );
+
+		if ( !dynamicVertexData.isEmpty() ) {
+			if ( auto iVertexData = nif->getIndex( index, "Vertex Data" ); iVertexData.isValid() ) {
+				int n = nif->rowCount( iVertexData );
+				for ( int i = 0; i < n; i++ ) {
+					if ( auto iVertex = nif->getIndex( iVertexData, i ); iVertex.isValid() ) {
+						if ( i < dynamicVertexData.size() ) {
+							Vector4 v = dynamicVertexData.at( i );
+							if ( auto j = nif->getItem( iVertex, "Vertex" ); j ) {
+								if ( j->hasValueType( NifValue::tHalfVector3 ) )
+									nif->set<HalfVector3>( j, HalfVector3( Vector3( v ) ) );
+								else
+									nif->set<Vector3>( j, Vector3( v ) );
+							}
+							if ( auto j = nif->getItem( iVertex, "Bitangent X" ); j )
+								nif->set<float>( j, v[3] );
+							else if ( auto j = nif->getItem( iVertex, "Unused W" ); j )
+								nif->set<float>( j, v[3] );
+						}
+					}
+				}
+			}
+		}
 
 		if ( newType != "BSDismemberSkinInstance" )
 			return index;
