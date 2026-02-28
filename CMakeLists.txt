@@ -332,12 +332,12 @@ set(NIFSKOPE_DATA_FILES
     "${CMAKE_SOURCE_DIR}/res/qt.conf"
 )
 
-if(EXISTS "${CMAKE_SOURCE_DIR}/build/nif.xml")
-    list(APPEND NIFSKOPE_DATA_FILES "${CMAKE_SOURCE_DIR}/build/nif.xml")
+if(EXISTS "${CMAKE_SOURCE_DIR}/lib/nif.xml")
+    list(APPEND NIFSKOPE_DATA_FILES "${CMAKE_SOURCE_DIR}/lib/nif.xml")
 endif()
 
-if(EXISTS "${CMAKE_SOURCE_DIR}/build/docsys/kfmxml/kfm.xml")
-    list(APPEND NIFSKOPE_DATA_FILES "${CMAKE_SOURCE_DIR}/build/docsys/kfmxml/kfm.xml")
+if(EXISTS "${CMAKE_SOURCE_DIR}/lib/docsys/kfmxml/kfm.xml")
+    list(APPEND NIFSKOPE_DATA_FILES "${CMAKE_SOURCE_DIR}/lib/docsys/kfmxml/kfm.xml")
 endif()
 
 foreach(DATA_FILE ${NIFSKOPE_DATA_FILES})
