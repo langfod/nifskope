@@ -1,6 +1,0 @@
-[submodule "lib/docsys/kfmxml"]
-	path = lib/docsys/kfmxml
-	url = https://github.com/niftools/kfmxml.git
-[submodule "lib/docsys/nifxml"]
-	path = lib/docsys/nifxml
-	url = https://github.com/niftools/nifxml.git

@@ -1,4 +1,33 @@
-﻿# NifSkope 2.0.dev11
+﻿Unofficial experimental WIP version of NifSkope ( 2.52.0.1 ) with Skyrim PBR support.
+
+Includes work by jonahex for Skyrim PBR support ( https://github.com/Jonahex/nifskope/tree/SkyrimPBR ).  
+Based on code from Community Shaders https://github.com/doodlum/skyrim-community-shaders
+
+Multi-scatter, Twolayer/Coat and Fuzz added.
+No glint or Marschner.
+
+Tonemapping, brightness, metal specular, displacement, subsurface probably still need adjustments.
+
+Build migrated to cmake and vcpkg. QT and qmake not required.
+
+Best to add "ccache-4.12.3-windows-x86_64" to "external folder.  
+ https://github.com/ccache/ccache/releases/download/v4.12.1/ccache-4.12.3-windows-x86_64.zip
+
+Use `.\BuildRelease.ps1` to build.
+
+
+
+Note: Qt6 code is brought in via vcpkg. Due due how some of the Qt6 packages are compiled building may fail from long path names.  
+  Keep this repo at the start of a drive path.
+
+
+Only Windows tested. Multi-platform may not work now. 
+
+From: Nifskope https://github.com/fo76utils/nifskope f16e948
+
+---
+
+# NifSkope 2.0.dev11
 
 NifSkope is a tool for opening and editing the NetImmerse file format (NIF). NIF is used by video games such as Morrowind, Oblivion, Skyrim, Fallout 3/NV/4/76, Starfield, Civilization IV, and more.
 

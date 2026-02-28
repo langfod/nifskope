@@ -23,6 +23,7 @@
     "freetype",
     "harfbuzz",
     "zlib",
+    "half",
     {
       "name": "qtbase",
       "features": [

@@ -1346,11 +1346,19 @@ void BSLightingShaderProperty::resetParams()
 	backlightPower = 0.0;
 
 	// Skyrim PBR properties
+	// also in glproperty.h BSShaderLightingProperty::resetParams() and should match 
+	pbrFlags = 0;
 	specularLevel = 0.04;
 	roughnessScale = 1;
-	displacementScale = 0.2;
+	displacementScale = 1.0; //0.2;
 	thickness = 1;
 	subsurfaceColor = Color3(1, 1, 1);
+	coatColor = Color3(1, 1, 1);
+	coatStrength = 1.0;
+	coatRoughness = 1.0;
+	coatSpecularLevel = 0.04;
+	fuzzColor = Color3(1, 1, 1);
+	fuzzWeight = 1.0;
 }
 
 void BSLightingShaderProperty::updateParams( const NifModel * nif )
@@ -1489,24 +1497,61 @@ void BSLightingShaderProperty::updateParams( const NifModel * nif )
 		}
 
 		// Skyrim PBR properties
-		specularLevel = nif->get<float>( lsp, "Specular Level" );
-		roughnessScale = nif->get<float>( lsp, "Roughness Scale" );
-		displacementScale = nif->get<float>( lsp, "Displacement Scale" );
-		thickness = nif->get<float>( lsp, "Subsurface Opacity" );
-		subsurfaceColor = nif->get<Color3>( lsp, "Subsurface Color" );
+		if ( hasSF2( ShaderFlags::SLSF2_Unused01 ) ) {
+			// Build pbrFlags bitmask for shader dispatch
+			// bit 0 = PBR, bit 1 = TwoLayer, bit 2 = Fuzz, bit 3 = Subsurface, bit 4 = ColoredCoat
+			pbrFlags = 1;
+			if ( hasSF2( ShaderFlags::SLSF2_Multi_Layer_Parallax ) )
+				pbrFlags |= 2;   // TwoLayer/Coat
+			if ( hasSF2( ShaderFlags::SLSF2_Soft_Lighting ) )
+				pbrFlags |= 4;   // Fuzz
+			if ( hasSF2( ShaderFlags::SLSF2_Rim_Lighting ) )
+				pbrFlags |= 8;   // Subsurface
+			if ( hasSF2( ShaderFlags::SLSF2_Effect_Lighting ) )
+				pbrFlags |= 16;  // ColoredCoat
+
+			specularLevel = nif->get<float>( lsp, "Specular Level" );
+			roughnessScale = nif->get<float>( lsp, "Roughness Scale" );
+			displacementScale = nif->get<float>( lsp, "Displacement Scale" );
+
+			// Subsurface properties (bit 3, mutually exclusive with TwoLayer)
+			if ( pbrFlags & 8 ) {
+				subsurfaceColor = nif->get<Color3>( lsp, "Subsurface Color" );
+				thickness = nif->get<float>( lsp, "Subsurface Opacity" );
+			}
+
+			// TwoLayer/Coat properties (bit 1)
+			if ( pbrFlags & 2 ) {
+				coatColor = nif->get<Color3>( lsp, "Coat Color" );
+				coatStrength = nif->get<float>( lsp, "Coat Strength" );
+				coatRoughness = nif->get<float>( lsp, "Coat Roughness" );
+				coatSpecularLevel = nif->get<float>( lsp, "Coat Specular Level" );
+			}
+
+			// Fuzz properties (bit 2)
+			if ( pbrFlags & 4 ) {
+				fuzzColor = nif->get<Color3>( lsp, "Fuzz Color" );
+				fuzzWeight = nif->get<float>( lsp, "Fuzz Weight" );
+			}
+		}
 
 		// Environment Map, Mask and Reflection Scale
 		hasEnvironmentMap =
 			( isST(ShaderFlags::ST_EnvironmentMap) && hasSF1(ShaderFlags::SLSF1_Environment_Mapping) )
 			|| ( isST(ShaderFlags::ST_EyeEnvmap) && hasSF1(ShaderFlags::SLSF1_Eye_Environment_Mapping) )
-			|| ( bsVersion == 100 && hasMultiLayerParallax );
+			|| ( bsVersion == 100 && hasMultiLayerParallax )
+			|| hasSF2( ShaderFlags::SLSF2_Unused01 ); // PBR always gets environment mapping
 
-		useEnvironmentMask = hasEnvironmentMap && !textures.value( 5, "" ).isEmpty();
+		useEnvironmentMask = hasEnvironmentMap && !hasSF2( ShaderFlags::SLSF2_Unused01 ) && !textures.value( 5, "" ).isEmpty();
 
 		if ( isST( ShaderFlags::ST_EnvironmentMap ) )
 			environmentReflection = nif->get<float>( lsp, "Environment Map Scale" );
 		else if ( isST( ShaderFlags::ST_EyeEnvmap ) )
 			environmentReflection = nif->get<float>( lsp, "Eye Cubemap Scale" );
+
+		// PBR always uses full environment reflection
+		if ( hasSF2( ShaderFlags::SLSF2_Unused01 ) )
+			environmentReflection = 2.0f;
 	}
 }
 

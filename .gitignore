@@ -76,4 +76,5 @@ vc100.pdb
 # VSCode
 .vscode/
 /build
+/dist
 /external/ccache*

@@ -817,11 +817,18 @@ bool Renderer::setupProgramCE1( const NifModel * nif, Program * prog, Shape * me
 		prog->uniSampler( bsprop, "HeightMap", 3, texunit, gray, clamp );
 
 		// Skyrim PBR
+		prog->uni1i( "pbrFlags", lsp->pbrFlags );
 		prog->uni1f( "specularLevel", lsp->specularLevel );
 		prog->uni1f( "roughnessScale", lsp->roughnessScale );
 		prog->uni1f( "displacementScale", lsp->displacementScale );
 		prog->uni1f( "thickness", lsp->thickness );
 		prog->uni3f( "subsurfaceColor", lsp->subsurfaceColor.red(), lsp->subsurfaceColor.green(), lsp->subsurfaceColor.blue() );
+		prog->uni3f( "coatColor", lsp->coatColor.red(), lsp->coatColor.green(), lsp->coatColor.blue() );
+		prog->uni1f( "coatStrength", lsp->coatStrength );
+		prog->uni1f( "coatRoughness", lsp->coatRoughness );
+		prog->uni1f( "coatSpecularLevel", lsp->coatSpecularLevel );
+		prog->uni3f( "fuzzColor", lsp->fuzzColor.red(), lsp->fuzzColor.green(), lsp->fuzzColor.blue() );
+		prog->uni1f( "fuzzWeight", lsp->fuzzWeight );
 
 	} else {
 		// BSEffectShaderProperty

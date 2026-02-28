@@ -786,11 +786,19 @@ public:
 	float backlightPower = 0.0;
 
 	// Skyrim PBR properties
+	// also in glpoperty.cpp BSShaderLightingProperty::resetParams() and should match 
+	int pbrFlags = 0;
 	float specularLevel = 0.04;
 	float roughnessScale = 1;
-	float displacementScale = 0.2;
+	float displacementScale = 1.0; //0.2;
 	float thickness = 1;
 	Color3 subsurfaceColor = Color3(1, 1, 1);
+	Color3 coatColor = Color3(1, 1, 1);
+	float coatStrength = 1.0;
+	float coatRoughness = 1.0;
+	float coatSpecularLevel = 0.04;
+	Color3 fuzzColor = Color3(1, 1, 1);
+	float fuzzWeight = 1.0;
 
 protected:
 	void setController( const NifModel * nif, const QModelIndex & controller ) override final;

@@ -13,11 +13,31 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * PBR BRDF functions based on Community Shaders (GPL-3.0 license)
+ * https://github.com/doodlum/skyrim-community-shaders
+ *   BRDF.hlsli / PBRMath.hlsli / PBR.hlsli
+ * and orginal work by jonahex
+ * https://github.com/Jonahex/nifskope/tree/SkyrimPBR
+ * References:
+ *   Walter et al. 2007 (GGX)
+ *   Heitz 2014 (SmithJointApprox)
+ *   Schlick 1994 (Fresnel)
+ *   Lazarov 2013 (EnvBRDF)
+ *   Estevez & Kulla 2017 (Charlie/fabric)
+ *   Neubelt 2013 (velvet visibility)
+ *   Lagarde 2014 (specular AO)
  */
 
 #version 410 core
 
 #include "uniforms.glsl"
+
+#ifndef M_PI
+	#define M_PI 3.1415926535897932384626433832795
+#endif
+#define M_TAU (2.0 * M_PI)
+#define EPSILON 1e-5
 
 uniform sampler2D BaseMap;
 uniform sampler2D NormalMap;
@@ -31,12 +51,28 @@ uniform samplerCube CubeMap;
 uniform vec3 subsurfaceColor;
 uniform float thickness;
 
+uniform vec3 coatColor;
+uniform float coatStrength;
+uniform float coatRoughness;
+uniform float coatSpecularLevel;
+
+uniform vec3 fuzzColor;
+uniform float fuzzWeight;
+
+uniform int pbrFlags;
+// pbrFlags bits:
+// 0 = PBR enabled
+// 1 = TwoLayer/Coat
+// 2 = Fuzz
+// 3 = Subsurface
+// 4 = ColoredCoat
+
 uniform bool hasGlowMap;
 uniform vec3 glowColor;
 uniform float glowMult;
 
 uniform float alpha;
-uniform int alphaFlags;			// bits 0 to 2: alpha test mode, bit 3: alpha blending enabled
+uniform int alphaFlags;
 uniform float alphaThreshold;
 
 uniform vec3 tintColor;
@@ -78,66 +114,51 @@ out vec4 fragColor;
 mat3 btnMatrix_norm = mat3(normalize(btnMatrix[0]), normalize(btnMatrix[1]), normalize(btnMatrix[2]));
 
 
-vec3 tonemap(vec3 x, float y)
-{
-	float a = 0.15;
-	float b = 0.50;
-	float c = 0.10;
-	float d = 0.20;
-	float e = 0.02;
-	float f = 0.30;
+// ---- BRDF Building Blocks ----
+// Based on Community Shaders BRDF.hlsli
 
-	vec3 z = x * (y * 4.22978723);
-	z = (z * (a * z + b * c) + d * e) / (z * (a * z + b) + d * f) - e / f;
-	return z / (y * 0.93333333);
-}
-
-vec3 toGrayscale(vec3 color)
-{
-	return vec3(dot(vec3(0.3, 0.59, 0.11), color));
-}
-
-vec3 getFresnelFactorSchlick(vec3 specularColor, float VdotH)
-{
-	float Fc = pow(1 - VdotH, 5);  // 1 sub, 3 mul
-	return clamp(50.0 * specularColor.g, 0, 1) * Fc + (1 - Fc) * specularColor;
-}
-
-float getGeometryFunctionSmithJointApprox(float roughness, float NdotV, float NdotL)
+// GGX/Trowbridge-Reitz NDF (Walter et al. 2007)
+float D_GGX(float roughness, float NdotH)
 {
 	float a = roughness * roughness;
-	float Vis_SmithV = NdotL * (NdotV * (1 - a) + a);
-	float Vis_SmithL = NdotV * (NdotL * (1 - a) + a);
-	return 0.5 / (Vis_SmithV + Vis_SmithL);
+	float a2 = a * a;
+	float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
+	return a2 / (M_PI * d * d);
 }
 
-float getDistributionFunctionGGX(float roughness, float NdotH)
+// Charlie NDF for fabric/fuzz (Estevez & Kulla 2017)
+float D_Charlie(float roughness, float NdotH)
 {
-	float a2 = pow(roughness, 4);
-	float d = max((NdotH * a2 - NdotH) * NdotH + 1, 1e-5);
-	return a2 / (d * d);
+	float invAlpha = pow(abs(roughness), -4.0);
+	float cos2h = NdotH * NdotH;
+	float sin2h = 1.0 - cos2h;
+	return (2.0 + invAlpha) * pow(abs(sin2h), invAlpha * 0.5) / M_TAU;
 }
 
-vec3 getSpecularDirectLightMultiplierMicrofacet(float roughness, vec3 specularColor, float NdotL, float NdotV, float NdotH, float VdotH)
+// Smith Joint Approximation (Heitz 2014, UE4 variant)
+float Vis_SmithJointApprox(float roughness, float NdotV, float NdotL)
 {
-	float D = getDistributionFunctionGGX(roughness, NdotH);
-	float G = getGeometryFunctionSmithJointApprox(roughness, NdotV, NdotL);
-	vec3 F = getFresnelFactorSchlick(specularColor, VdotH);
-
-	return D * G * F;
+	float a = roughness * roughness;
+	float Vis_SmithV = NdotL * (NdotV * (1.0 + a) + a);
+	float Vis_SmithL = NdotV * (NdotL * (1.0 + a) + a);
+	return 0.5 / max(Vis_SmithV + Vis_SmithL, EPSILON);
 }
 
-vec3 sRGB2Lin(vec3 color)
+// Neubelt visibility for fabric (Neubelt 2013)
+float Vis_Neubelt(float NdotV, float NdotL)
 {
-	return pow(color, vec3(2.2, 2.2, 2.2));
+	return 1.0 / (4.0 * (NdotL + NdotV - NdotL * NdotV));
 }
 
-vec3 Lin2sRGB(vec3 color)
+// Schlick Fresnel
+vec3 F_Schlick(vec3 specularColor, float VdotH)
 {
-	return pow(color, vec3(0.42, 0.42, 0.42));
+	float Fc = pow(1.0 - VdotH, 5.0);
+	return clamp(50.0 * specularColor.g, 0.0, 1.0) * Fc + (1.0 - Fc) * specularColor;
 }
 
-vec2 getEnvBRDFApproxLazarov(float roughness, float NdotV)
+// Lazarov EnvBRDF approximation (Lazarov 2013)
+vec2 EnvBRDFApproxLazarov(float roughness, float NdotV)
 {
 	const vec4 c0 = vec4(-1, -0.0275, -0.572, 0.022);
 	const vec4 c1 = vec4(1, 0.0425, 1.04, -0.04);
@@ -147,32 +168,69 @@ vec2 getEnvBRDFApproxLazarov(float roughness, float NdotV)
 	return AB;
 }
 
+
+// ---- Composite specular functions ----
+
+// Standard GGX microfacet specular
+vec3 GetSpecularMicrofacet(float roughness, vec3 specColor, float NdotL, float NdotV, float NdotH, float VdotH, out vec3 F)
+{
+	float D = D_GGX(roughness, NdotH);
+	float G = Vis_SmithJointApprox(roughness, NdotV, NdotL);
+	F = F_Schlick(specColor, VdotH);
+	return D * G * F;
+}
+
+// Fabric/fuzz microflake specular (Charlie + Neubelt)
+vec3 GetSpecularMicroflakes(float roughness, vec3 specColor, float NdotL, float NdotV, float NdotH, float VdotH)
+{
+	float D = D_Charlie(roughness, NdotH);
+	float G = Vis_Neubelt(NdotV, NdotL);
+	vec3 F = F_Schlick(specColor, VdotH);
+	return D * G * F;
+}
+
+// Specular AO (Lagarde 2014, Frostbite)
+float SpecularAOLagarde(float NdotV, float ao, float roughness)
+{
+	return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
+
+// ---- Tone mapping ----
+// Matches sk_default.frag: works in sRGB space, handles gamma internally
+
+vec3 tonemap(vec3 x)
+{
+	float a = 0.15;
+	float b = 0.50;
+	float c = 0.10;
+	float d = 0.20;
+	float e = 0.02;
+	float f = 0.30;
+
+	vec3 z = x * x * D.a * (A.a * 4.22978723);
+	z = (z * (a * z + b * c) + d * e) / (z * (a * z + b) + d * f) - e / f;
+	return sqrt(z / (A.a * 0.93333333));
+}
+
+
+// ---- Parallax ----
+
 float GetMipLevel(vec2 coords)
 {
-	// Compute the current gradients:
 	ivec2 textureDims = textureSize(HeightMap, 0);
-
 	vec2 texCoordsPerSize = coords * textureDims;
-
 	vec2 dxSize = dFdx(texCoordsPerSize);
 	vec2 dySize = dFdy(texCoordsPerSize);
-
-	// Find min of change in u and v across quad: compute du and dv magnitude across quad
 	vec2 dTexCoords = dxSize * dxSize + dySize * dySize;
-
-	// Standard mipmapping uses max here
 	float minTexCoordDelta = max(dTexCoords.x, dTexCoords.y);
-
-	// Compute the current mip level  (* 0.5 is effectively computing a square root before )
-	float mipLevel = max(0.5 * log2(minTexCoordDelta), 0);
-
-	return mipLevel;
+	return max(0.5 * log2(minTexCoordDelta), 0);
 }
 
 vec2 GetParallaxCoords(float distance, vec2 coords, float mipLevel, vec3 viewDir)
 {
 	vec3 viewDirTS = normalize(viewDir * btnMatrix_norm);
-	viewDirTS.xy /= viewDirTS.z * 0.7 + 0.3;  // Fix for objects at extreme viewing angles
+	viewDirTS.xy /= viewDirTS.z * 0.7 + 0.3;
 
 	float nearBlendToFar = clamp(distance / 2048.0, 0.0, 1.0);
 	float maxHeight = 0.1 * displacementScale;
@@ -184,14 +242,14 @@ vec2 GetParallaxCoords(float distance, vec2 coords, float mipLevel, vec3 viewDir
 
 		float stepSize = 1.0 / numSteps;
 
-		vec2 offsetPerStep = viewDirTS.xy * vec2(maxHeight, maxHeight) * stepSize;
-		vec2 prevOffset = viewDirTS.xy * vec2(minHeight, minHeight) + coords.xy;
+		vec2 offsetPerStep = viewDirTS.xy * vec2(maxHeight) * stepSize;
+		vec2 prevOffset = viewDirTS.xy * vec2(minHeight) + coords.xy;
 
 		float prevBound = 1.0;
 		float prevHeight = 1.0;
 
-		vec2 pt1 = vec2(0.0, 0.0);
-		vec2 pt2 = vec2(0.0, 0.0);
+		vec2 pt1 = vec2(0.0);
+		vec2 pt2 = vec2(0.0);
 
 		while (numSteps > 0u)
 		{
@@ -243,14 +301,8 @@ vec2 GetParallaxCoords(float distance, vec2 coords, float mipLevel, vec3 viewDir
 		float denominator = delta2 - delta1;
 
 		float parallaxAmount = 0.0;
-		if (denominator == 0.0)
-		{
-			parallaxAmount = 0.0;
-		}
-		else
-		{
+		if (denominator != 0.0)
 			parallaxAmount = (pt1.x * delta2 - pt2.x * delta1) / denominator;
-		}
 
 		nearBlendToFar *= nearBlendToFar;
 
@@ -260,6 +312,9 @@ vec2 GetParallaxCoords(float distance, vec2 coords, float mipLevel, vec3 viewDir
 
 	return coords;
 }
+
+
+// ---- Main ----
 
 void main()
 {
@@ -274,11 +329,11 @@ void main()
 
 	vec4 baseMap = texture( BaseMap, offset );
 
+	// Alpha test
 	vec4 color = vec4( baseMap.rgb, 1.0 );
 	if ( alphaFlags > 0 ) {
-		float	a = C.a * baseMap.a * alpha;
-		// 0: always, 1: <, 2: ==, 3: <=, 4: >, 5: !=, 6: >=, 7: never
-		int	m = ( a < alphaThreshold ? 0x2B2B : ( a > alphaThreshold ? 0x7171 : 0x4D4D ) );
+		float a = C.a * baseMap.a * alpha;
+		int m = ( a < alphaThreshold ? 0x2B2B : ( a > alphaThreshold ? 0x7171 : 0x4D4D ) );
 		if ( ( m & ( 1 << alphaFlags ) ) == 0 )
 			discard;
 		if ( ( alphaFlags & 8 ) != 0 )
@@ -289,61 +344,175 @@ void main()
 	vec4 glowMap = texture( GlowMap, offset );
 	vec4 rmaosMap = texture( EnvironmentMap, offset );
 
-	float roughness = rmaosMap.r * roughnessScale;
-	float metallic = rmaosMap.g;
+	// Material properties from RMAOS texture
+	float roughness = clamp(rmaosMap.r * roughnessScale, 0.04, 1.0);
+	float metallic = clamp(rmaosMap.g, 0.0, 1.0);
 	float ao = rmaosMap.b;
 	float reflectance = rmaosMap.a * specularLevel;
 
-	vec3 baseColor = baseMap.rgb * C.rgb * (1 - metallic);
-	vec3 f0 = mix(vec3(reflectance, reflectance, reflectance), baseMap.rgb, metallic);
+	// Albedo includes vertex color tint before metallic split
+	vec3 albedo = baseMap.rgb * C.rgb;
+	// F0: for dielectrics use RMAOS alpha (specular level), for metals use albedo
+	vec3 f0 = mix(vec3(reflectance), albedo, metallic);
+	// De-metallize: metals have no diffuse, only specular from albedo
+	vec3 baseColor = albedo * (1.0 - metallic);
 
 	vec3 normal = normalize(btnMatrix_norm * (normalMap.rgb * 2.0 - 1.0));
 	if ( !gl_FrontFacing )
 		normal *= -1.0;
 
 	vec3 L = normalize(LightDir);
-	vec3 R = reflect(-L, normal);
 	vec3 H = normalize( L + V );
 
-	float NdotL = max( dot(normal, L), 0.0 );
-	float NdotH = max( dot(normal, H), 0.0 );
-	float NdotV = max( dot(normal, V), 0.0 );
-	float VdotH = max( dot(H, V), 0.0 );
+	float NdotL = dot(normal, L);
+	float NdotH = max( dot(normal, H), EPSILON );
+	float NdotV = abs( dot(normal, V) ) + EPSILON;
+	float VdotH = max( dot(H, V), EPSILON );
+	float VdotL = dot(V, L);
+	float satNdotL = clamp( NdotL, EPSILON, 1.0 );
 
-	vec3 ambientLight = sRGB2Lin(A.rgb);
-	vec3 directLight = sRGB2Lin(D.rgb);
+	// NifSkope provides lighting in sRGB space; keep consistent with other shaders
+	vec3 ambientLight = A.rgb;
+	vec3 directLight = D.rgb;
+
+	// ---- Direct Lighting ----
 
 	// Diffuse
-	vec3 diffuse = directLight * NdotL + ambientLight * ao;
+	vec3 diffuse = baseColor * directLight * satNdotL;
 
-	// Specular
-	vec3 specular = getSpecularDirectLightMultiplierMicrofacet(roughness, f0, NdotL, NdotV, NdotH, VdotH) * directLight * NdotL;
-	vec2 specularBRDF = getEnvBRDFApproxLazarov(roughness, NdotV);
-	specular += ambientLight * ao * (f0 * specularBRDF.x + specularBRDF.y);
+	// Specular (GGX)
+	vec3 fresnel;
+	vec3 specular = GetSpecularMicrofacet(roughness, f0, satNdotL, NdotV, NdotH, VdotH, fresnel) * directLight * satNdotL;
 
-	// Emissive
-	vec3 emissive = glowColor * glowMult;
-	if ( hasEmit ) {
-		emissive *= glowMap.rgb;
+	// Multi-scatter energy compensation (Kulla & Conty approximation via EnvBRDF)
+	vec2 specularBRDF = EnvBRDFApproxLazarov(roughness, NdotV);
+	float energyCompensation_denom = specularBRDF.x + specularBRDF.y;
+	vec3 energyCompensation = vec3(1.0);
+	if ( energyCompensation_denom > EPSILON )
+		energyCompensation = 1.0 + f0 * (1.0 / energyCompensation_denom - 1.0);
+	specular *= energyCompensation;
+
+	// ---- Indirect Lighting ----
+
+	// Diffuse ambient
+	vec3 indirectDiffuse = baseColor * ambientLight * ao;
+
+	// Specular ambient (env BRDF approximation)
+	vec3 specularLobeWeight = f0 * specularBRDF.x + specularBRDF.y;
+	specularLobeWeight *= energyCompensation;
+	float specAO = SpecularAOLagarde(NdotV, ao, roughness);
+	vec3 indirectSpecular = specularLobeWeight * ambientLight * specAO;
+
+	// Conserve energy: reduce diffuse by specular contribution
+	indirectDiffuse *= (1.0 - specularLobeWeight);
+
+	// ---- Cube map IBL ----
+	if ( hasCubeMap ) {
+		vec3 R = reflect( -V, normal );
+		vec3 reflectedWS = envMapRotation * R;
+		vec4 cube = texture( CubeMap, reflectedWS );
+		indirectSpecular += cube.rgb * envReflection * specularLobeWeight * specAO;
+	} else {
+		// Fallback: use ambient as crude environment reflection for metals
+		// Without this, metallic surfaces appear black since they have no diffuse
+		indirectSpecular += ambientLight * specularLobeWeight * specAO;
 	}
 
-	vec3 transmission = vec3(0, 0, 0);
-	if (hasRimlight)
+	// ---- Subsurface Scattering (flag bit 3) ----
+	vec3 transmission = vec3(0.0);
+	if ( (pbrFlags & 8) != 0 )
 	{
-		vec4 subsurfaceMap = texture(BacklightMap, offset);
-		vec3 finalSubsurfaceColor = subsurfaceColor * subsurfaceMap.rgb;
-		float finalThickness = thickness * subsurfaceMap.a;
+		vec4 subsurfaceMap = texture( BacklightMap, offset );
+		vec3 sssColor = subsurfaceColor * subsurfaceMap.rgb;
+		float sssThickness = thickness * subsurfaceMap.a;
 
 		const float subsurfacePower = 12.234;
-		float forwardScatter = exp2(clamp(-dot(V, L), 0.0, 1.0) * subsurfacePower - subsurfacePower);
-		float backScatter = clamp(NdotL * finalThickness + (1.0 - finalThickness), 0.0, 1.0) * 0.5;
-		float subsurface = mix(backScatter, 1, forwardScatter) * (1.0 - finalThickness);
-		transmission += finalSubsurfaceColor * subsurface * directLight;
+		float forwardScatter = exp2(clamp(-VdotL, 0.0, 1.0) * subsurfacePower - subsurfacePower);
+		float backScatter = clamp(satNdotL * sssThickness + (1.0 - sssThickness), 0.0, 1.0) * 0.5;
+		float subsurface = mix(backScatter, 1.0, forwardScatter) * (1.0 - sssThickness);
+		transmission = sssColor * subsurface * directLight;
+
+		// Subsurface ambient contribution
+		indirectDiffuse += subsurfaceColor * (1.0 - thickness) * ambientLight * ao;
 	}
 
-	color.rgb = baseColor.rgb * diffuse + transmission + specular + emissive;
-	color.rgb = tonemap( color.rgb * D.a, A.a );
-	color.rgb = Lin2sRGB(color.rgb);
+	// ---- Fuzz/Fabric (flag bit 2, mutually exclusive with TwoLayer) ----
+	if ( (pbrFlags & 4) != 0 )
+	{
+		// Fuzz specular uses Charlie NDF + Neubelt visibility
+		vec3 fuzzSpecular = GetSpecularMicroflakes(roughness, fuzzColor, satNdotL, NdotV, NdotH, VdotH);
+		fuzzSpecular *= directLight * satNdotL;
+
+		// Multi-scatter compensation for fuzz
+		vec2 fuzzBRDF = EnvBRDFApproxLazarov(roughness, NdotV);
+		float fuzzEnergyDenom = fuzzBRDF.x + fuzzBRDF.y;
+		if ( fuzzEnergyDenom > EPSILON )
+			fuzzSpecular *= 1.0 + fuzzColor * (1.0 / fuzzEnergyDenom - 1.0);
+
+		// Blend between standard specular and fuzz specular
+		specular = mix(specular, fuzzSpecular, fuzzWeight);
+
+		// Fuzz ambient contribution
+		indirectDiffuse += fuzzColor * fuzzWeight * ambientLight * ao;
+	}
+
+	// ---- TwoLayer/Coat (flag bit 1, mutually exclusive with Fuzz) ----
+	vec3 coatDiffuseContribution = vec3(0.0);
+	if ( (pbrFlags & 2) != 0 )
+	{
+		// Coat specular (same GGX model, separate roughness)
+		float coatR = clamp(coatRoughness, 0.04, 1.0);
+		vec3 coatF0 = vec3(coatSpecularLevel);
+		vec3 coatF;
+		vec3 coatSpec = GetSpecularMicrofacet(coatR, coatF0, satNdotL, NdotV, NdotH, VdotH, coatF);
+		coatSpec *= directLight * satNdotL;
+
+		// Layer attenuation: coat absorbs light before reaching base
+		float layerAttenuation = 1.0 - coatF.r * coatStrength;
+
+		// Attenuate base diffuse and specular
+		diffuse *= layerAttenuation;
+		specular *= layerAttenuation;
+
+		// Add coat specular
+		specular += coatSpec * coatStrength;
+
+		// Coat also attenuates indirect
+		float coatFresnel_indirect = F_Schlick(coatF0, NdotV).r;
+		float indirectLayerAttenuation = 1.0 - coatFresnel_indirect * coatStrength;
+		indirectDiffuse *= indirectLayerAttenuation;
+		indirectSpecular *= indirectLayerAttenuation;
+
+		// Coat specular ambient
+		vec2 coatBRDF = EnvBRDFApproxLazarov(coatR, NdotV);
+		indirectSpecular += (coatF0 * coatBRDF.x + coatBRDF.y) * coatStrength * ambientLight * specAO;
+
+		// Colored coat diffuse (flag bit 4)
+		if ( (pbrFlags & 16) != 0 ) {
+			coatDiffuseContribution = coatColor * directLight * satNdotL;
+			// Colored coat indirect
+			vec3 coatSpecLobeWeight = coatF0 * coatBRDF.x + coatBRDF.y;
+			indirectDiffuse += coatColor * (1.0 - coatSpecLobeWeight) * coatStrength * ambientLight * ao;
+		}
+	}
+
+	// ---- Emissive ----
+	vec3 emissive = vec3(0.0);
+	if ( hasEmit ) {
+		emissive = glowColor * glowMult * glowScaleSRGB;
+		if ( hasGlowMap )
+			emissive *= glowMap.rgb;
+	}
+
+	// ---- Composite ----
+	color.rgb = diffuse + indirectDiffuse + specular + indirectSpecular + transmission + emissive;
+
+	// Apply colored coat diffuse
+	if ( (pbrFlags & 18) == 18 )  // bits 1 and 4 both set
+		color.rgb = mix(color.rgb, color.rgb - diffuse + coatDiffuseContribution, coatStrength);
+
+	// Tonemap (same as sk_default.frag, works in sRGB space)
+	color.rgb = tonemap( color.rgb );
 	color.a = C.a * baseMap.a;
 
 	fragColor = color;

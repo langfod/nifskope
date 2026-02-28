@@ -27,8 +27,8 @@ set(CMAKE_JOB_POOL_COMPILE compile)
 set(CMAKE_JOB_POOL_LINK link)
 set(CMAKE_INSTALL_MESSAGE LAZY)
 
-# Set your project name. This will be the name of your SKSE .dll file.
-project(nifskope VERSION 0.9.1 LANGUAGES C CXX)
+# Set your project name.
+project(NifSkope VERSION 2.52.1 LANGUAGES C CXX)
 
 
 # Enable better dependency tracking for incremental builds
@@ -82,17 +82,17 @@ include(ExternalDependencies)
 # Version from git (best-effort)
 ###############################################################################
 set(NIFSKOPE_VERSION "${PROJECT_VERSION}")
-set(NIFSKOPE_REVISION "")
-find_package(Git QUIET)
-if(GIT_FOUND)
-    execute_process(
-        COMMAND "${GIT_EXECUTABLE}" rev-parse --short=7 HEAD
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        OUTPUT_VARIABLE NIFSKOPE_REVISION
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-endif()
+set(NIFSKOPE_REVISION "PBR test unofficial")
+#find_package(Git QUIET)
+#if(GIT_FOUND)
+#    execute_process(
+#        COMMAND "${GIT_EXECUTABLE}" rev-parse --short=7 HEAD
+#        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+#        OUTPUT_VARIABLE NIFSKOPE_REVISION
+#        OUTPUT_STRIP_TRAILING_WHITESPACE
+#        ERROR_QUIET
+#    )
+#endif()
 
 ###############################################################################
 # Vendored: libfo76utils (static library)
@@ -155,7 +155,7 @@ endif()
 ###############################################################################
 # NifSkope executable
 ###############################################################################
-add_executable(NifSkope WIN32
+add_executable(${PROJECT_NAME} WIN32
     # --- Data ---
     src/data/nifitem.cpp
     src/data/niftypes.cpp
@@ -276,7 +276,7 @@ add_executable(NifSkope WIN32
 ###############################################################################
 # Include directories
 ###############################################################################
-target_include_directories(NifSkope PRIVATE
+target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/src/gl"
     "${CMAKE_SOURCE_DIR}/lib"
@@ -285,7 +285,7 @@ target_include_directories(NifSkope PRIVATE
 ###############################################################################
 # Compile definitions
 ###############################################################################
-target_compile_definitions(NifSkope PRIVATE
+target_compile_definitions(${PROJECT_NAME} PRIVATE
     _USE_MATH_DEFINES
     QT_NO_CAST_FROM_BYTEARRAY
     QT_NO_URL_CAST_FROM_STRING
@@ -298,7 +298,7 @@ target_compile_definitions(NifSkope PRIVATE
 ###############################################################################
 # Link libraries
 ###############################################################################
-target_link_libraries(NifSkope PRIVATE
+target_link_libraries(${PROJECT_NAME} PRIVATE
     # Vendored
     libfo76utils
     # Header-only (FetchContent)
@@ -332,27 +332,68 @@ set(NIFSKOPE_DATA_FILES
     "${CMAKE_SOURCE_DIR}/res/qt.conf"
 )
 
+# from https://github.com/niftools/nifxml/blob/master/nif.xml (modified for Skyrim PBR)
 if(EXISTS "${CMAKE_SOURCE_DIR}/lib/nif.xml")
     list(APPEND NIFSKOPE_DATA_FILES "${CMAKE_SOURCE_DIR}/lib/nif.xml")
 endif()
 
-if(EXISTS "${CMAKE_SOURCE_DIR}/lib/docsys/kfmxml/kfm.xml")
-    list(APPEND NIFSKOPE_DATA_FILES "${CMAKE_SOURCE_DIR}/lib/docsys/kfmxml/kfm.xml")
+# from https://github.com/niftools/kfmxml/blob/develop/kfm.xml
+if(EXISTS "${CMAKE_SOURCE_DIR}/lib/kfm.xml")
+    list(APPEND NIFSKOPE_DATA_FILES "${CMAKE_SOURCE_DIR}/lib/kfm.xml")
 endif()
 
 foreach(DATA_FILE ${NIFSKOPE_DATA_FILES})
-    add_custom_command(TARGET NifSkope POST_BUILD
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${DATA_FILE}"
-            "$<TARGET_FILE_DIR:NifSkope>/"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/"
     )
 endforeach()
 
 # Copy shaders directory
 if(EXISTS "${CMAKE_SOURCE_DIR}/res/shaders")
-    add_custom_command(TARGET NifSkope POST_BUILD
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/res/shaders"
-            "$<TARGET_FILE_DIR:NifSkope>/shaders"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders"
     )
 endif()
+
+
+# Post-build: Create distribution folder structure
+set(DIST_ROOT "${CMAKE_SOURCE_DIR}/dist")
+set(DIST_VERSION_DIR "${DIST_ROOT}/${PROJECT_NAME}_${PROJECT_VERSION}")
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+# Create distribution directories   
+
+    
+    COMMAND "${CMAKE_COMMAND}" -E echo "Creating distribution folder: dist/${PROJECT_NAME}_${PROJECT_VERSION}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${DIST_VERSION_DIR}"
+
+    #copy nif.xml and kfml.xml
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/lib/nif.xml"
+        "${DIST_VERSION_DIR}/nif.xml"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/lib/kfm.xml"
+        "${DIST_VERSION_DIR}/kfm.xml"
+    # copy data files
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/res/style.qss"
+        "${DIST_VERSION_DIR}/style.qss"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/res/qt.conf"
+        "${DIST_VERSION_DIR}/qt.conf"
+    # copy shaders directory   
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${CMAKE_SOURCE_DIR}/res/shaders"
+        "${DIST_VERSION_DIR}/shaders"
+    # copy exe and pdb
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:${PROJECT_NAME}>"
+        "${DIST_VERSION_DIR}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_PDB_FILE:${PROJECT_NAME}>"
+        "${DIST_VERSION_DIR}/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
+)
