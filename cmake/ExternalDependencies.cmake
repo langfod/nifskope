@@ -8,8 +8,6 @@
 
 # Include individual library configurations
 
-
-include(nifly)
 include(miniball)
 
 # Helper function to link all external dependencies to a target

@@ -356,8 +356,3 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/res/shaders")
             "$<TARGET_FILE_DIR:NifSkope>/shaders"
     )
 endif()
-
-
-# TODO:
-# copy QT platforms folder from VCPKG_INSTALLED_DIR\VCPKG_TARGET_TRIPLET\Qt6\plugins\platforms
-# copy nifskope nif.xml and kfm.xml
