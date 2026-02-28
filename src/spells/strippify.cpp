@@ -3,7 +3,7 @@
 #include "blocks.h"
 #include "gl/gltools.h"
 
-#include "lib/meshoptimizer/src/meshoptimizer.h"
+#include <meshoptimizer.h>
 #include "lib/nvtristripwrapper.h"
 
 #include <climits>

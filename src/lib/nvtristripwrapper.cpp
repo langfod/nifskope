@@ -1,7 +1,7 @@
 #include "nvtristripwrapper.h"
 #include "data/niftypes.h"
 
-#include "meshoptimizer/src/meshoptimizer.h"
+#include <meshoptimizer.h>
 
 
 QVector<QVector<quint16> > stripify( const QVector<Triangle> & triangles, bool stitch )

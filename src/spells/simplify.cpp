@@ -5,7 +5,7 @@
 #include <unordered_set>
 
 #include "fp32vec4.hpp"
-#include "meshoptimizer/src/meshoptimizer.h"
+#include <meshoptimizer.h>
 #include "simplify.h"
 
 // Brief description is deliberately not autolinked to class Spell

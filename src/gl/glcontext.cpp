@@ -1257,7 +1257,7 @@ NifSkopeOpenGLContext::ShapeData::~ShapeData()
 
 
 #define XXH_INLINE_ALL 1
-#include "xxhash.h"
+#include <xxhash.h>
 
 struct alignas( 64 ) ShapeDataHashSecret {
 	unsigned char	buf[XXH3_SECRET_DEFAULT_SIZE];

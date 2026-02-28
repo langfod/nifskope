@@ -824,7 +824,7 @@ public:
 
 	inline operator std::uint32_t() const
 	{
-		return std::uint32_t( FloatVector4( *this ) * 127.5f + 127.5f );
+		return std::uint32_t( static_cast<FloatVector4>( static_cast<const Vector4 &>( *this ) ) * 127.5f + 127.5f );
 	}
 };
 
@@ -841,7 +841,7 @@ public:
 
 	inline operator std::uint32_t() const
 	{
-		return FloatVector4( *this ).convertToX10Y10Z10W2();
+		return static_cast<FloatVector4>( static_cast<const Vector4 &>( *this ) ).convertToX10Y10Z10W2();
 	}
 };
 
@@ -1613,7 +1613,7 @@ public:
 	}
 	inline operator std::uint32_t() const
 	{
-		return std::uint32_t( FloatVector4(*this) * 255.0f );
+		return std::uint32_t( static_cast<FloatVector4>( static_cast<const Color4 &>( *this ) ) * 255.0f );
 	}
 };
 
@@ -1628,7 +1628,7 @@ public:
 	}
 	inline operator std::uint32_t() const
 	{
-		return std::uint32_t( FloatVector4(*this).shuffleValues(0xC6) * 255.0f );
+		return std::uint32_t( static_cast<FloatVector4>( static_cast<const Color4 &>( *this ) ).shuffleValues(0xC6) * 255.0f );
 	}
 };
 

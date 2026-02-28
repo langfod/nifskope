@@ -39,7 +39,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "libfo76utils/src/pbr_lut.hpp"
 #include "libfo76utils/src/sfcube2.hpp"
 
-#include <gli.hpp>
+#include <gli/gli.hpp>
 
 #include <QBuffer>
 #include <QByteArray>
@@ -51,7 +51,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <QString>
 #include <QtEndian>
 
-#include "dds.h"
+#include <DirectXTex.h>
 
 /*! @file gltexloaders.cpp
  * @brief Texture loading functions.
@@ -72,9 +72,9 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
-#define FOURCC_DXT1 MAKEFOURCC( 'D', 'X', 'T', '1' )
-#define FOURCC_DXT3 MAKEFOURCC( 'D', 'X', 'T', '3' )
-#define FOURCC_DXT5 MAKEFOURCC( 'D', 'X', 'T', '5' )
+static constexpr quint32 FOURCC_DXT1 = 0x31545844; // "DXT1"
+static constexpr quint32 FOURCC_DXT3 = 0x33545844; // "DXT3"
+static constexpr quint32 FOURCC_DXT5 = 0x35545844; // "DXT5"
 
 //! Shift amounts for RGBA conversion
 static const int rgbashift[4] = {
@@ -1095,20 +1095,6 @@ GLuint TexCache::texLoad( const QModelIndex & iData, TexFmt & texformat,
 			}
 		}
 
-		DDS_HEADER hdr = {};
-		hdr.dwSize = sizeof( hdr );
-		hdr.dwHeaderFlags = DDS_HEADER_FLAGS_TEXTURE | DDS_HEADER_FLAGS_LINEARSIZE | DDS_HEADER_FLAGS_MIPMAP;
-		hdr.dwHeight = height;
-		hdr.dwWidth = width;
-		hdr.dwMipMapCount = mipmaps;
-		hdr.ddspf.dwFlags = DDS_FOURCC;
-		hdr.ddspf.dwSize = sizeof( DDS_PIXELFORMAT );
-		hdr.ddspf.dwRBitMask = mask[0];
-		hdr.ddspf.dwGBitMask = mask[1];
-		hdr.ddspf.dwBBitMask = mask[2];
-		hdr.ddspf.dwRBitMask = mask[3];
-		hdr.dwSurfaceFlags = DDS_SURFACE_FLAGS_TEXTURE | DDS_SURFACE_FLAGS_MIPMAP;
-
 		texformat.imageFormat = TexFmt::TEXFMT_NIF;
 
 		switch ( format ) {
@@ -1149,28 +1135,39 @@ GLuint TexCache::texLoad( const QModelIndex & iData, TexFmt & texformat,
 			break;
 		case 4: //PX_FMT_DXT1
 			texformat.imageEncoding |= TexFmt::TEXFMT_DXT1;
-			hdr.ddspf.dwFourCC = FOURCC_DXT1;
-			hdr.dwPitchOrLinearSize = width * height / 2;
 			break;
 		case 5: //PX_FMT_DXT3
 			texformat.imageEncoding |= TexFmt::TEXFMT_DXT3;
-			hdr.ddspf.dwFourCC = FOURCC_DXT3;
-			hdr.dwPitchOrLinearSize = width * height;
 			break;
 		case 6: //PX_FMT_DXT5
 			texformat.imageEncoding |= TexFmt::TEXFMT_DXT5;
-			hdr.ddspf.dwFourCC = FOURCC_DXT5;
-			hdr.dwPitchOrLinearSize = width * height;
 			break;
 		}
 
 		if ( format >= 4 && format <= 6 ) {
-			// Create and prepend DDS header
-			char dds[sizeof(hdr)];
-			memcpy( dds, &hdr, sizeof(hdr) );
+			// Create DDS header using DirectXTex and prepend to pixel data
+			DXGI_FORMAT dxgiFmt = DXGI_FORMAT_BC1_UNORM;
+			if ( format == 5 )
+				dxgiFmt = DXGI_FORMAT_BC2_UNORM;
+			else if ( format == 6 )
+				dxgiFmt = DXGI_FORMAT_BC3_UNORM;
 
-			buf.buffer().prepend( QByteArray::fromRawData( dds, sizeof( hdr ) ) );
-			buf.buffer().prepend( QByteArray::fromStdString( "DDS " ) );
+			DirectX::TexMetadata meta = {};
+			meta.width = width;
+			meta.height = height;
+			meta.depth = 1;
+			meta.arraySize = 1;
+			meta.mipLevels = mipmaps;
+			meta.format = dxgiFmt;
+			meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+			size_t headerSize = 0;
+			DirectX::EncodeDDSHeader( meta, DirectX::DDS_FLAGS_NONE, nullptr, 0, headerSize );
+			QByteArray ddsHeader( static_cast<qsizetype>(headerSize), '\0' );
+			DirectX::EncodeDDSHeader( meta, DirectX::DDS_FLAGS_NONE,
+				reinterpret_cast<uint8_t *>(ddsHeader.data()), headerSize, headerSize );
+
+			buf.buffer().prepend( ddsHeader );
 
 			mipmaps = texLoadDDS( QString( "[%1] NiPixelData" ).arg( nif->getBlockNumber( iData ) ),
 									target, buf.buffer(), id );
@@ -1941,18 +1938,24 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 		//return false;
 	} else if ( filepath.endsWith( ".dds", Qt::CaseInsensitive ) ) {
 		//qDebug() << "Will copy from DDS data";
-		DDS_HEADER ddsHeader;
-		char tag[4];
-		f.read( &tag[0], 4 );
-
-		if ( strncmp( tag, "DDS ", 4 ) != 0 || f.read( (char *)&ddsHeader, sizeof(DDS_HEADER) ) != sizeof(DDS_HEADER) )
+		DirectX::TexMetadata ddsMeta = {};
+		DirectX::DDSMetaData ddsPixFmt = {};
+		HRESULT hr = DirectX::GetMetadataFromDDSMemoryEx(
+			reinterpret_cast<const uint8_t *>(fileData.constData()), fileData.size(),
+			DirectX::DDS_FLAGS_NONE, ddsMeta, &ddsPixFmt );
+		if ( FAILED(hr) )
 			throw QString( "not a DDS file" );
 
-		qDebug() << "Size: " << ddsHeader.dwSize << "Flags" << ddsHeader.dwHeaderFlags << "Height" << ddsHeader.dwHeight << "Width" << ddsHeader.dwWidth;
-		qDebug() << "FourCC:" << ddsHeader.ddspf.dwFourCC;
+		// Header size: magic (4) + DDS_HEADER (124) + optional DDS_HEADER_DXT10 (20)
+		size_t ddsHeaderSize = ddsPixFmt.IsDX10() ? 148 : 128;
 
-		if ( ddsHeader.ddspf.dwFlags & DDS_FOURCC ) {
-			switch ( ddsHeader.ddspf.dwFourCC ) {
+		qDebug() << "Size: " << ddsPixFmt.size << "Height" << quint32(ddsMeta.height) << "Width" << quint32(ddsMeta.width);
+		qDebug() << "FourCC:" << ddsPixFmt.fourCC;
+
+		bool isFourCC = ( ddsPixFmt.flags & 0x4 ); // DDPF_FOURCC
+
+		if ( isFourCC ) {
+			switch ( ddsPixFmt.fourCC ) {
 			case FOURCC_DXT1:
 				//qDebug() << "DXT1";
 				nif->set<uint>( iData, "Pixel Format", 4 );
@@ -1966,13 +1969,34 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 				nif->set<uint>( iData, "Pixel Format", 6 );
 				break;
 			default:
-				qCCritical( nsIo ) << QObject::tr( "Unsupported DDS format: %1 %2" ).arg( ddsHeader.ddspf.dwFourCC ).arg( "FourCC" );
-				return false;
+				// DX10 extended header: map from DXGI_FORMAT
+				if ( ddsPixFmt.IsDX10() ) {
+					switch ( ddsMeta.format ) {
+					case DXGI_FORMAT_BC1_UNORM:
+					case DXGI_FORMAT_BC1_UNORM_SRGB:
+						nif->set<uint>( iData, "Pixel Format", 4 );
+						break;
+					case DXGI_FORMAT_BC2_UNORM:
+					case DXGI_FORMAT_BC2_UNORM_SRGB:
+						nif->set<uint>( iData, "Pixel Format", 5 );
+						break;
+					case DXGI_FORMAT_BC3_UNORM:
+					case DXGI_FORMAT_BC3_UNORM_SRGB:
+						nif->set<uint>( iData, "Pixel Format", 6 );
+						break;
+					default:
+						qCCritical( nsIo ) << QObject::tr( "Unsupported DDS format: DXGI_FORMAT %1" ).arg( ddsMeta.format );
+						return false;
+					}
+				} else {
+					qCCritical( nsIo ) << QObject::tr( "Unsupported DDS format: %1 %2" ).arg( ddsPixFmt.fourCC ).arg( "FourCC" );
+					return false;
+				}
 				break;
 			}
 		} else {
 			//qDebug() << "RAW";
-			switch ( ddsHeader.ddspf.dwRGBBitCount ) {
+			switch ( ddsPixFmt.RGBBitCount ) {
 			case 24:
 				// RGB
 				nif->set<uint>( iData, "Pixel Format", 0 );
@@ -1983,32 +2007,32 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 				break;
 			default:
 				// theoretically could have a palettised DDS in 8bpp
-				qCCritical( nsIo ) << QObject::tr( "Unsupported DDS format: %1 %2" ).arg( ddsHeader.ddspf.dwRGBBitCount ).arg( "BPP" );
+				qCCritical( nsIo ) << QObject::tr( "Unsupported DDS format: %1 %2" ).arg( ddsPixFmt.RGBBitCount ).arg( "BPP" );
 				return false;
 				break;
 			}
 		}
 
-		qDebug() << "BPP:" << ddsHeader.ddspf.dwRGBBitCount;
-		qDebug() << "RMask:" << ddsHeader.ddspf.dwRBitMask;
-		qDebug() << "GMask:" << ddsHeader.ddspf.dwGBitMask;
-		qDebug() << "BMask:" << ddsHeader.ddspf.dwBBitMask;
-		qDebug() << "AMask:" << ddsHeader.ddspf.dwABitMask;
+		qDebug() << "BPP:" << ddsPixFmt.RGBBitCount;
+		qDebug() << "RMask:" << ddsPixFmt.RBitMask;
+		qDebug() << "GMask:" << ddsPixFmt.GBitMask;
+		qDebug() << "BMask:" << ddsPixFmt.BBitMask;
+		qDebug() << "AMask:" << ddsPixFmt.ABitMask;
 
 		// Note that these might not match what's expected; hopefully the loader function is smart
 		if ( nif->checkVersion( 0, 0x0A020000 ) ) {
-			nif->set<uint>( iData, "Bits Per Pixel", ddsHeader.ddspf.dwRGBBitCount );
-			nif->set<uint>( iData, "Red Mask", ddsHeader.ddspf.dwRBitMask );
-			nif->set<uint>( iData, "Green Mask", ddsHeader.ddspf.dwGBitMask );
-			nif->set<uint>( iData, "Blue Mask", ddsHeader.ddspf.dwBBitMask );
-			nif->set<uint>( iData, "Alpha Mask", ddsHeader.ddspf.dwABitMask );
+			nif->set<uint>( iData, "Bits Per Pixel", ddsPixFmt.RGBBitCount );
+			nif->set<uint>( iData, "Red Mask", ddsPixFmt.RBitMask );
+			nif->set<uint>( iData, "Green Mask", ddsPixFmt.GBitMask );
+			nif->set<uint>( iData, "Blue Mask", ddsPixFmt.BBitMask );
+			nif->set<uint>( iData, "Alpha Mask", ddsPixFmt.ABitMask );
 
 			QModelIndex oldFastCompare = nif->getIndex( iData, "Old Fast Compare" );
 
 			for ( int i = 0; i < 8; i++ ) {
-				if ( ddsHeader.ddspf.dwRGBBitCount == 24 ) {
+				if ( ddsPixFmt.RGBBitCount == 24 ) {
 					nif->set<quint8>( nif->getIndex( oldFastCompare, i ), unk8bytes24[i] );
-				} else if ( ddsHeader.ddspf.dwRGBBitCount == 32 ) {
+				} else if ( ddsPixFmt.RGBBitCount == 32 ) {
 					nif->set<quint8>( nif->getIndex( oldFastCompare, i ), unk8bytes32[i] );
 				}
 			}
@@ -2019,7 +2043,7 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 			QModelIndex destChannels = nif->getIndex( iData, "Channels" );
 
 			// DXT1, DXT5
-			if ( ddsHeader.ddspf.dwFlags & DDS_FOURCC ) {
+			if ( isFourCC ) {
 				// compressed
 				nif->set<uint>( iData, "Bits Per Pixel", 0 );
 
@@ -2036,17 +2060,17 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 					nif->set<quint8>( nif->getIndex( destChannels, i ), "Is Signed", 1 );
 				}
 			} else {
-				nif->set<uint>( iData, "Bits Per Pixel", ddsHeader.ddspf.dwRGBBitCount );
+				nif->set<uint>( iData, "Bits Per Pixel", ddsPixFmt.RGBBitCount );
 
 				// set RGB mask separately
 				for ( int i = 0; i < 3; i++ ) {
-					if ( ddsHeader.ddspf.dwRBitMask == RGBA_INV_MASK[i] ) {
+					if ( ddsPixFmt.RBitMask == RGBA_INV_MASK[i] ) {
 						//qDebug() << "red channel" << i;
 						nif->set<quint32>( nif->getIndex( destChannels, i ), "Type", 0 );
-					} else if ( ddsHeader.ddspf.dwGBitMask == RGBA_INV_MASK[i] ) {
+					} else if ( ddsPixFmt.GBitMask == RGBA_INV_MASK[i] ) {
 						//qDebug() << "green channel" << i;
 						nif->set<quint32>( nif->getIndex( destChannels, i ), "Type", 1 );
-					} else if ( ddsHeader.ddspf.dwBBitMask == RGBA_INV_MASK[i] ) {
+					} else if ( ddsPixFmt.BBitMask == RGBA_INV_MASK[i] ) {
 						//qDebug() << "blue channel" << i;
 						nif->set<quint32>( nif->getIndex( destChannels, i ), "Type", 2 );
 					}
@@ -2058,12 +2082,12 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 					nif->set<quint8>( nif->getIndex( destChannels, i ), "Is Signed", 0 );
 				}
 
-				if ( ddsHeader.ddspf.dwRGBBitCount == 32 ) {
+				if ( ddsPixFmt.RGBBitCount == 32 ) {
 					nif->set<quint32>( nif->getIndex( destChannels, 3 ), "Type", 3 );       // alpha
 					nif->set<quint32>( nif->getIndex( destChannels, 3 ), "Convention", 0 ); // fixed
 					nif->set<quint8>( nif->getIndex( destChannels, 3 ), "Bits Per Channel", 8 );
 					nif->set<quint8>( nif->getIndex( destChannels, 3 ), "Is Signed", 0 );
-				} else if ( ddsHeader.ddspf.dwRGBBitCount == 24 ) {
+				} else if ( ddsPixFmt.RGBBitCount == 24 ) {
 					nif->set<quint32>( nif->getIndex( destChannels, 3 ), "Type", 19 );      // empty
 					nif->set<quint32>( nif->getIndex( destChannels, 3 ), "Convention", 5 ); // empty
 					nif->set<quint8>( nif->getIndex( destChannels, 3 ), "Bits Per Channel", 0 );
@@ -2073,31 +2097,32 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 		}
 
 		// generate mipmap sizes and offsets
-		//qDebug() << "Mipmap count: " << ddsHeader.dwMipMapCount;
-		nif->set<quint32>( iData, "Num Mipmaps", ddsHeader.dwMipMapCount );
+		//qDebug() << "Mipmap count: " << ddsMeta.mipLevels;
+		nif->set<quint32>( iData, "Num Mipmaps", static_cast<quint32>(ddsMeta.mipLevels) );
 		QModelIndex destMipMaps = nif->getIndex( iData, "Mipmaps" );
 		nif->updateArraySize( destMipMaps );
 
-		nif->set<quint32>( iData, "Bytes Per Pixel", ddsHeader.ddspf.dwRGBBitCount / 8 );
+		nif->set<quint32>( iData, "Bytes Per Pixel", ddsPixFmt.RGBBitCount / 8 );
 
-		int mipmapWidth  = ddsHeader.dwWidth;
-		int mipmapHeight = ddsHeader.dwHeight;
+		int mipmapWidth  = static_cast<int>(ddsMeta.width);
+		int mipmapHeight = static_cast<int>(ddsMeta.height);
 		int mipmapOffset = 0;
 
-		for ( quint32 i = 0; i < ddsHeader.dwMipMapCount; i++ ) {
-			nif->set<quint32>( nif->getIndex( destMipMaps, i ), "Width", mipmapWidth );
-			nif->set<quint32>( nif->getIndex( destMipMaps, i ), "Height", mipmapHeight );
-			nif->set<quint32>( nif->getIndex( destMipMaps, i ), "Offset", mipmapOffset );
+		for ( size_t i = 0; i < ddsMeta.mipLevels; i++ ) {
+			nif->set<quint32>( nif->getIndex( destMipMaps, static_cast<int>(i) ), "Width", mipmapWidth );
+			nif->set<quint32>( nif->getIndex( destMipMaps, static_cast<int>(i) ), "Height", mipmapHeight );
+			nif->set<quint32>( nif->getIndex( destMipMaps, static_cast<int>(i) ), "Offset", mipmapOffset );
 
-			if ( ddsHeader.ddspf.dwFlags & DDS_FOURCC ) {
-				if ( ddsHeader.ddspf.dwFourCC == FOURCC_DXT1 ) {
+			if ( isFourCC ) {
+				if ( ddsPixFmt.fourCC == FOURCC_DXT1
+					|| ddsMeta.format == DXGI_FORMAT_BC1_UNORM || ddsMeta.format == DXGI_FORMAT_BC1_UNORM_SRGB ) {
 					mipmapOffset += std::max( 8, ( mipmapWidth * mipmapHeight / 2 ) );
-				} else if ( ddsHeader.ddspf.dwFourCC == FOURCC_DXT5 ) {
+				} else {
 					mipmapOffset += std::max( 16, ( mipmapWidth * mipmapHeight ) );
 				}
-			} else if ( ddsHeader.ddspf.dwRGBBitCount == 24 ) {
+			} else if ( ddsPixFmt.RGBBitCount == 24 ) {
 				mipmapOffset += ( mipmapWidth * mipmapHeight * 3 );
-			} else if ( ddsHeader.ddspf.dwRGBBitCount == 32 ) {
+			} else if ( ddsPixFmt.RGBBitCount == 32 ) {
 				mipmapOffset += ( mipmapWidth * mipmapHeight * 4 );
 			}
 
@@ -2112,7 +2137,7 @@ bool TexCache::texSaveNIF( NifModel * nif, const QString & filepath, QModelIndex
 		QModelIndex iPixelData = nif->getIndex( iData, "Pixel Data" );
 		nif->updateArraySize( iPixelData );
 
-		f.seek( 4 + ddsHeader.dwSize );
+		f.seek( ddsHeaderSize );
 		//qDebug() << "Reading from " << f.pos();
 
 		QByteArray ddsData = f.read( mipmapOffset );

@@ -9,7 +9,7 @@
 
 #include "fp32vec4.hpp"
 #include "io/MeshFile.h"
-#include "meshoptimizer/src/meshoptimizer.h"
+#include <meshoptimizer.h>
 #include "meshlet.h"
 #include "ui/widgets/filebrowser.h"
 

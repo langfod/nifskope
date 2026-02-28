@@ -657,7 +657,7 @@ void spScaleVertices::cast_Starfield(
 	if ( iNormals.isValid() && nif->isArray( iNormals ) && nif->rowCount( iNormals ) > 0 ) {
 		QVector< UDecVector4 >	normals = nif->getArray<UDecVector4>( iNormals );
 		for ( UDecVector4 & v : normals ) {
-			FloatVector4	n( v );
+			FloatVector4	n( static_cast<const Vector4 &>( v ) );
 			( n * scaleVector ).normalize().convertToVector3( &(v[0]) );
 		}
 		nif->setArray<UDecVector4>( iNormals, normals );

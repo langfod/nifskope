@@ -529,7 +529,7 @@ OutputFile::OutputFile(const char *fileName, size_t bufSize)
   if (bufSize > 0)
     buf = new unsigned char[bufSize];
 #if defined(_WIN32) || defined(_WIN64)
-  f = fopen64(fileName, "wb");
+  f = std::fopen(fileName, "wb"); //fopen64(fileName, "wb");
 #else
   f = std::fopen(fileName, "wb");
 #endif

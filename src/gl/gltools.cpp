@@ -46,7 +46,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <functional>
 
 #include "fp32vec4.hpp"
-#include "miniball/Seb.h"
+#include "Seb.h"
 
 //! \file gltools.cpp GL helper functions
 

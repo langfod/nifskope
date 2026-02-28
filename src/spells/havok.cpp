@@ -6,10 +6,10 @@
 #include "nifskope.h"
 #include "spells/blocks.h"
 
-#include "lib/coacd.h"
+#include "coacd.h"
 #include "lib/nvtristripwrapper.h"
 #include "lib/qhull.h"
-#include "meshoptimizer/src/meshoptimizer.h"
+#include <meshoptimizer.h>
 
 #include <QBoxLayout>
 #include <QCheckBox>
