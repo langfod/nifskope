@@ -434,6 +434,7 @@ SettingsRender::SettingsRender( QWidget * parent ) :
 	connect( ui->btnClearCubeCache, &QPushButton::clicked, this, &SettingsRender::clearCubeCache );
 	connect( ui->btnLoadF76CubeMap, &QPushButton::clicked, this, &SettingsRender::selectF76CubeMap );
 	connect( ui->btnLoadSTFCubeMap, &QPushButton::clicked, this, &SettingsRender::selectSTFCubeMap );
+	connect( ui->btnLoadHDRI, &QPushButton::clicked, this, &SettingsRender::selectHDRI );
 }
 
 void SettingsRender::read()
@@ -506,6 +507,18 @@ void SettingsRender::selectSTFCubeMap()
 {
 	if ( GLView::selectPBRCubeMapForGame( 172 ) )
 		modifyPane();
+}
+
+void SettingsRender::selectHDRI()
+{
+	QString filter = tr( "HDRI Files (*.hdr *.exr);;DDS Cubemaps (*.dds);;All Files (*.*)" );
+	QString path = QFileDialog::getOpenFileName(
+		this, tr( "Select HDRI Environment Map" ), QString(), filter );
+
+	if ( !path.isEmpty() ) {
+		ui->cubeMapPathHDRI->setText( path );
+		modifyPane();
+	}
 }
 
 void SettingsRender::detectMSAAMaxSamples()

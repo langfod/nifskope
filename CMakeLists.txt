@@ -63,7 +63,7 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS
 # Find packages
 ###############################################################################
 find_package(Qt6 REQUIRED COMPONENTS
-    Core Gui Xml OpenGL Network Widgets OpenGLWidgets Core5Compat
+    Core Gui Xml OpenGL Network Widgets OpenGLWidgets #Core5Compat
 )
 
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -74,6 +74,7 @@ find_package(gli CONFIG REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
 find_package(directxtex CONFIG REQUIRED)
 find_package(directxmesh CONFIG REQUIRED)
+find_package(OpenEXR CONFIG REQUIRED)
 
 # Setup external dependencies
 include(ExternalDependencies)
@@ -311,7 +312,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Network
     Qt6::Widgets
     Qt6::OpenGLWidgets
-    Qt6::Core5Compat
+    #Qt6::Core5Compat
     # vcpkg
     Qhull::qhullcpp
     Qhull::qhull_r
@@ -320,6 +321,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     glm::glm
     Microsoft::DirectXTex
     Microsoft::DirectXMesh
+    OpenEXR::OpenEXR
     # System
     opengl32
 )

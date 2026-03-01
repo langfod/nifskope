@@ -61,6 +61,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QFileDialog>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSurface>
@@ -305,6 +306,42 @@ void GLView::selectPBRCubeMap()
 			scene->renderer->updateSettings();
 			updateScene();
 		}
+	}
+}
+
+void GLView::selectHDRI()
+{
+	QString filter = tr( "HDRI Files (*.hdr *.exr);;DDS Cubemaps (*.dds);;All Files (*.*)" );
+	QString path = QFileDialog::getOpenFileName(
+		nullptr, tr( "Select HDRI Environment Map" ), QString(), filter );
+
+	if ( path.isEmpty() )
+		return;
+
+	qDebug() << "selectHDRI: selected" << path;
+
+	QSettings settings;
+	settings.setValue( "Settings/Render/General/Cube Map Path HDRI", path );
+
+	TexCache::clearCubeCache();
+
+	if ( scene && scene->renderer ) {
+		scene->renderer->updateSettings();
+		qDebug() << "selectHDRI: renderer updated, triggering scene update";
+		updateScene();
+	}
+}
+
+void GLView::clearHDRI()
+{
+	QSettings settings;
+	settings.remove( "Settings/Render/General/Cube Map Path HDRI" );
+
+	TexCache::clearCubeCache();
+
+	if ( scene && scene->renderer ) {
+		scene->renderer->updateSettings();
+		updateScene();
 	}
 }
 

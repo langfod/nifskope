@@ -151,6 +151,17 @@ class SFCubeMapCache : public SFCubeMapFilter
                               const unsigned char *inBufData, size_t inBufSize,
                               int cubeWidth, bool invertCoord, float maxLevel,
                               unsigned char outFmt);
+  // Convert equirectangular float image (FloatVector4 per pixel) to DDS cube map.
+  // Bypasses RGBE encoding for lossless float-to-cubemap conversion.
+  static bool convertFloatImageToDDS(std::vector< unsigned char >& outBuf,
+                                     const FloatVector4 *imageData, int w, int h,
+                                     int cubeWidth, bool invertCoord,
+                                     float maxLevel, unsigned char outFmt);
+  // Convert equirectangular float image to filtered DDS cubemap via cache.
+  // Returns the new buffer size, or 0 on error.
+  size_t convertImageFromFloat(unsigned char *buf, size_t bufCapacity,
+                               const FloatVector4 *imageData, int w, int h,
+                               bool outFmtFloat = false, int hdrToneMap = 0);
   void clear();
 };
 

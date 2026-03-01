@@ -53,6 +53,11 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <DirectXTex.h>
 
+#include <OpenEXR/ImfRgbaFile.h>
+#include <OpenEXR/ImfArray.h>
+#include <OpenEXR/ImfIO.h>
+#include <Imath/ImathBox.h>
+
 /*! @file gltexloaders.cpp
  * @brief Texture loading functions.
  *
@@ -910,6 +915,134 @@ void TexCache::clearCubeCache()
 	sfCubeMapCache.clear();
 }
 
+// OpenEXR IStream adapter for reading from QByteArray in memory
+class QByteArrayIStream : public Imf::IStream
+{
+public:
+	QByteArrayIStream( const QByteArray & data )
+		: Imf::IStream( "memory" ), buf( data ), pos( 0 ) {}
+
+	bool isMemoryMapped() const override { return true; }
+
+	bool read( char c[], int n ) override
+	{
+		qint64 remaining = buf.size() - pos;
+		if ( remaining <= 0 )
+			return false;
+		qint64 toRead = std::min( qint64(n), remaining );
+		std::memcpy( c, buf.constData() + pos, toRead );
+		pos += toRead;
+		return ( toRead == n );
+	}
+
+	char * readMemoryMapped( int n ) override
+	{
+		if ( pos + n > buf.size() )
+			throw std::runtime_error( "EXR: read past end of buffer" );
+		char * ptr = const_cast< char * >( buf.constData() + pos );
+		pos += n;
+		return ptr;
+	}
+
+	std::uint64_t tellg() override { return std::uint64_t( pos ); }
+
+	void seekg( std::uint64_t p ) override { pos = qint64( p ); }
+
+private:
+	const QByteArray & buf;
+	qint64 pos;
+};
+
+GLuint TexCache::texLoadEXR(
+	const QString & filepath, GLenum & target, QByteArray & data, GLuint * id )
+{
+	qDebug() << "texLoadEXR: loading" << filepath << "(" << data.size() << "bytes)";
+
+	QByteArrayIStream stream( data );
+	Imf::RgbaInputFile file( stream );
+
+	Imath::Box2i dw = file.dataWindow();
+	int width = dw.max.x - dw.min.x + 1;
+	int height = dw.max.y - dw.min.y + 1;
+
+	if ( width < 8 || height < 8 || width > 32768 || height > 32768 )
+		throw QString( "EXR load failed: invalid dimensions %1x%2" ).arg( width ).arg( height );
+
+	Imf::Array2D< Imf::Rgba > pixels( height, width );
+	file.setFrameBuffer( &pixels[0][0] - dw.min.x - dw.min.y * width, 1, width );
+	file.readPixels( dw.min.y, dw.max.y );
+
+	qDebug() << "texLoadEXR: decoded" << width << "x" << height << "-> direct float pipeline";
+
+	// Convert Imf::Rgba (half-float) to FloatVector4, flipping Y axis.
+	// EXR stores row 0 at the top (north pole), but convertHDRToDDSThread
+	// expects row 0 = south pole (matching the HDR parser's (h-1-y) flip).
+	std::vector< FloatVector4 > floatImage( size_t(width) * size_t(height) );
+	for ( int y = 0; y < height; y++ ) {
+		int srcY = height - 1 - y;
+		for ( int x = 0; x < width; x++ ) {
+			const Imf::Rgba & px = pixels[srcY][x];
+			floatImage[size_t(y) * size_t(width) + size_t(x)] = FloatVector4(
+				float( px.r ), float( px.g ), float( px.b ), 1.0f );
+		}
+	}
+
+	qDebug() << "texLoadEXR: converted to FloatVector4 -> delegating to texLoadPBRCubeMapFromFloat";
+
+	return texLoadPBRCubeMapFromFloat( filepath, target, floatImage.data(), width, height, id );
+}
+
+GLuint TexCache::texLoadPBRCubeMapFromFloat(
+	const QString & filepath, GLenum & target,
+	const FloatVector4 * imageData, int imgWidth, int imgHeight, GLuint * id )
+{
+	// Specular cubemap (pre-filtered with 7 roughness mip levels)
+	{
+		std::uint32_t width = std::uint32_t( pbrCubeMapResolution );
+		sfCubeMapCache.setOutputWidth( width );
+		sfCubeMapCache.setRoughnessTable( nullptr, 7 );
+		float normalizeLevel = float( ( 16 - hdrToneMapLevel ) * ( 16 - hdrToneMapLevel ) + 128 );
+		normalizeLevel *= 3.0f / 4096.0f;
+		sfCubeMapCache.setNormalizeLevel( normalizeLevel );
+		sfCubeMapCache.setImportanceSamplingQuality( pbrImportanceSamples );
+
+		size_t spaceRequired = width * width * 8 * 4 + 148;
+		QByteArray specData( qsizetype(spaceRequired), '\0' );
+
+		size_t newSize = sfCubeMapCache.convertImageFromFloat(
+			reinterpret_cast< unsigned char * >( specData.data() ), spaceRequired,
+			imageData, imgWidth, imgHeight, true, hdrToneMapLevel );
+
+		if ( !newSize )
+			throw QString( "EXR cubemap conversion failed (specular)" );
+
+		specData.resize( newSize );
+
+		// Diffuse irradiance cubemap (32x32, roughness=1.0)
+		{
+			std::uint32_t diffWidth = 32;
+			size_t diffSpaceRequired = diffWidth * diffWidth * 8 * 4 + 148;
+			QByteArray diffData( qsizetype(diffSpaceRequired), '\0' );
+
+			static const float roughnessDiffuse = 1.0f;
+			sfCubeMapCache.setOutputWidth( diffWidth );
+			sfCubeMapCache.setRoughnessTable( &roughnessDiffuse, 1 );
+			sfCubeMapCache.setImportanceSamplingQuality( -1 );
+
+			size_t diffNewSize = sfCubeMapCache.convertImageFromFloat(
+				reinterpret_cast< unsigned char * >( diffData.data() ), diffSpaceRequired,
+				imageData, imgWidth, imgHeight, true, hdrToneMapLevel );
+
+			if ( diffNewSize ) {
+				diffData.resize( diffNewSize );
+				(void) texLoadDDS( filepath, target, diffData, id + 1 );
+			}
+		}
+
+		return texLoadDDS( filepath, target, specData, id );
+	}
+}
+
 GLuint TexCache::texLoadPBRCubeMap(
 	const NifModel * nif, const QString & filepath, GLenum & target, QByteArray & data, GLuint * id )
 {
@@ -923,7 +1056,7 @@ GLuint TexCache::texLoadPBRCubeMap(
 		if ( FileBuffer::readUInt64Fast( dataPtr ) == 0x4E41494441523F23ULL ) {	// "#?RADIAN"
 			normalizeLevel = float( ( 16 - hdrToneMapLevel ) * ( 16 - hdrToneMapLevel ) + 128 );
 			normalizeLevel *= 3.0f / 4096.0f;
-			if ( nif->getBSVersion() >= 170 )	// not Fallout 76
+			if ( !nif || nif->getBSVersion() >= 170 )	// user HDRI or Starfield: don't flip Y
 				break;
 			for ( size_t i = 0; i <= 144; i++ ) {
 				std::uint32_t	tmp = FileBuffer::readUInt32Fast( dataPtr + i );
@@ -1230,11 +1363,26 @@ GLuint TexCache::texLoad( const NifModel * nif, const QString & filepath,
 		else
 			return texLoadColor( nif, filepath, target, width, height, data, id );
 	} else {
-		bool	fileFound;
-		if ( !nif )
-			fileFound = Game::GameManager::get_file( data, Game::OTHER, filepath, "textures", "" );
-		else
-			fileFound = nif->getResourceFile( data, filepath, "textures", "" );
+		bool	fileFound = false;
+		// Try absolute path first (for user-selected HDRI files)
+		QFileInfo fi( filepath );
+		if ( fi.isAbsolute() && fi.exists() ) {
+			QFile file( filepath );
+			if ( file.open( QIODevice::ReadOnly ) ) {
+				data = file.readAll();
+				fileFound = !data.isEmpty();
+			}
+			if ( fileFound )
+				qDebug() << "texLoad: loaded absolute path" << filepath << "(" << data.size() << "bytes)";
+			else
+				qWarning() << "texLoad: absolute path exists but failed to read:" << filepath;
+		}
+		if ( !fileFound ) {
+			if ( !nif )
+				fileFound = Game::GameManager::get_file( data, Game::OTHER, filepath, "textures", "" );
+			else
+				fileFound = nif->getResourceFile( data, filepath, "textures", "" );
+		}
 		if ( !fileFound )
 			throw QString( "could not open file" );
 	}
@@ -1242,23 +1390,28 @@ GLuint TexCache::texLoad( const NifModel * nif, const QString & filepath,
 	if ( data.isEmpty() )
 		return 0;
 
-	if ( filepath.endsWith( QLatin1StringView(".dds"), Qt::CaseInsensitive )
-		|| ( filepath.endsWith( QLatin1StringView(".hdr"), Qt::CaseInsensitive )
-			&& nif && nif->getBSVersion() >= 151 ) ) {
+	if ( filepath.endsWith( QLatin1StringView(".exr"), Qt::CaseInsensitive ) ) {
+		qDebug() << "texLoad: dispatching to texLoadEXR for" << filepath;
+		mipmaps = texLoadEXR( filepath, target, data, id );
+	} else if ( filepath.endsWith( QLatin1StringView(".dds"), Qt::CaseInsensitive )
+		|| filepath.endsWith( QLatin1StringView(".hdr"), Qt::CaseInsensitive ) ) {
+		bool	isAbsolutePath = QFileInfo( filepath ).isAbsolute();
 		bool	isCubeMap = false;
 		if ( data.size() >= 148 ) {
 			if ( FileBuffer::readUInt32Fast( data.data() ) == 0x20534444 ) {	// "DDS "
 				if ( data.data()[113] & 0x02 ) {	// DDSCAPS2_CUBEMAP
 					isCubeMap = true;
-					if ( nif->getBSVersion() < 170 && FileBuffer::readUInt32Fast( data.data() + 84 ) == 0x30315844 && data.data()[128] == 0x57 )
+					if ( nif && nif->getBSVersion() < 170 && FileBuffer::readUInt32Fast( data.data() + 84 ) == 0x30315844 && data.data()[128] == 0x57 )
 						data[128] = 0x5B;	// Fallout 76: DXGI_FORMAT_B8G8R8A8_UNORM -> DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
 				}
 			} else if ( FileBuffer::readUInt64Fast( data.data() ) == 0x4E41494441523F23ULL ) {	// "#?RADIAN"
 				isCubeMap = true;
 			}
 		}
-		if ( isCubeMap && nif && nif->getBSVersion() >= 151 ) {
-			mipmaps = texLoadPBRCubeMap( nif, filepath, target, data, id );
+		if ( isCubeMap && ( isAbsolutePath || !nif || nif->getBSVersion() >= 151 ) ) {
+			qDebug() << "texLoad: dispatching cubemap to texLoadPBRCubeMap for" << filepath
+					 << "(absolute:" << isAbsolutePath << ", isCubeMap:" << isCubeMap << ")";
+			mipmaps = texLoadPBRCubeMap( isAbsolutePath ? nullptr : nif, filepath, target, data, id );
 		} else {
 			mipmaps = texLoadDDS( filepath, target, data, id );
 		}
@@ -1341,6 +1494,7 @@ bool TexCache::texIsSupported( const QString & filepath )
 					|| filepath.endsWith( QLatin1StringView(".nif"), Qt::CaseInsensitive )
 					|| filepath.endsWith( QLatin1StringView(".texcache"), Qt::CaseInsensitive )
 					|| filepath.endsWith( QLatin1StringView(".hdr"), Qt::CaseInsensitive )
+					|| filepath.endsWith( QLatin1StringView(".exr"), Qt::CaseInsensitive )
 	);
 }
 

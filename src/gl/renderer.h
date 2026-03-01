@@ -85,6 +85,7 @@ protected:
 		std::uint8_t	meshCacheSize = 16;		// in units of 8 MiB
 		QString	cubeMapPathFO76;
 		QString	cubeMapPathSTF;
+		QString	cubeMapPathHDRI;	// user-selected HDRI for Skyrim PBR and skybox
 	} cfg;
 
 public:

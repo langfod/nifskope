@@ -456,6 +456,10 @@
       </item>
       <item row="1" column="3">
        <widget class="QPushButton" name="btnLoadCubeMap">
+        <property name="toolTip">
+         <string>Load an HDRI environment map (.hdr, .exr, .dds)
+Right-click for more options</string>
+        </property>
         <property name="text">
          <string/>
         </property>

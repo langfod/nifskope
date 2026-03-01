@@ -805,6 +805,98 @@ bool SFCubeMapCache::convertHDRToDDS(
   return true;
 }
 
+bool SFCubeMapCache::convertFloatImageToDDS(
+    std::vector< unsigned char >& outBuf,
+    const FloatVector4 *imageData, int w, int h,
+    int cubeWidth, bool invertCoord, float maxLevel, unsigned char outFmt)
+{
+  if (!imageData || w < 8 || h < 8 || w > 32768 || h > 32768)
+    return false;
+
+  // Apply Y-flip if needed (copy to mutable buffer)
+  std::vector< FloatVector4 > tmpBuf;
+  const FloatVector4 *srcData = imageData;
+  if (invertCoord)
+  {
+    tmpBuf.resize(size_t(w) * size_t(h));
+    for (int y = 0; y < h; y++)
+    {
+      const FloatVector4 *srcRow = imageData + (size_t(h - 1 - y) * size_t(w));
+      FloatVector4 *dstRow = tmpBuf.data() + (size_t(y) * size_t(w));
+      std::memcpy(dstRow, srcRow, size_t(w) * sizeof(FloatVector4));
+    }
+    srcData = tmpBuf.data();
+  }
+
+  size_t  outPixelSize =
+      (outFmt == 0x0A ? sizeof(std::uint64_t) : sizeof(std::uint32_t));
+  outBuf.resize(size_t(cubeWidth * cubeWidth) * 6 * outPixelSize + 148, 0);
+  unsigned char *p = outBuf.data();
+  (void) FileBuffer::writeDDSHeader(p, outFmt, cubeWidth, cubeWidth, 1, true);
+  p = p + 148;
+
+  int     threadCnt = int(std::thread::hardware_concurrency());
+  threadCnt = std::min< int >(threadCnt, std::min< int >(cubeWidth >> 3, 24));
+  threadCnt = std::max< int >(threadCnt, 1);
+  std::thread *threads[24];
+  for (int i = 0; i < 24; i++)
+    threads[i] = nullptr;
+  try
+  {
+    int     y0 = 0;
+    for (int i = 0; i < threadCnt; i++)
+    {
+      int     y1 = (cubeWidth * 6 * (i + 1)) / threadCnt;
+      threads[i] = new std::thread(convertHDRToDDSThread, p, outPixelSize,
+                                   cubeWidth, y0, y1, srcData, w, h,
+                                   maxLevel);
+      y0 = y1;
+    }
+    for (int i = 0; i < threadCnt; i++)
+    {
+      threads[i]->join();
+      delete threads[i];
+      threads[i] = nullptr;
+    }
+  }
+  catch (...)
+  {
+    for (int i = 0; i < 24; i++)
+    {
+      if (threads[i])
+      {
+        threads[i]->join();
+        delete threads[i];
+      }
+    }
+    throw;
+  }
+  return true;
+}
+
+size_t SFCubeMapCache::convertImageFromFloat(
+    unsigned char *buf, size_t bufCapacity,
+    const FloatVector4 *imageData, int w, int h,
+    bool outFmtFloat, int hdrToneMap)
+{
+  hdrToneMap = std::clamp< int >(hdrToneMap, 0, 16);
+  float   maxLevel = float(hdrToneMap > 0 ? (-65536 >> hdrToneMap) : 65504);
+  std::vector< unsigned char >  tmpBuf;
+  if (!convertFloatImageToDDS(tmpBuf, imageData, w, h, 2048, false,
+                              maxLevel, 0x0A))
+  {
+    return 0;
+  }
+  size_t  newSize = SFCubeMapFilter::convertImage(tmpBuf.data(), tmpBuf.size(),
+                                                  outFmtFloat, tmpBuf.size());
+  if (newSize && newSize <= bufCapacity)
+  {
+    std::memcpy(buf, tmpBuf.data(), newSize);
+    return newSize;
+  }
+  return 0;
+}
+
 void SFCubeMapCache::clear()
 {
   cachedTextures.clear();

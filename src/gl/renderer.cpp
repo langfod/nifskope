@@ -97,6 +97,7 @@ void Renderer::updateSettings()
 	globalUniforms->sfParallaxOffset = settings.value( "Settings/Render/General/Sf Parallax Offset", 0.5f).toFloat();
 	cfg.cubeMapPathFO76 = settings.value( "Settings/Render/General/Cube Map Path FO 76", "textures/shared/cubemaps/mipblur_defaultoutside1.dds" ).toString();
 	cfg.cubeMapPathSTF = settings.value( "Settings/Render/General/Cube Map Path STF", "textures/cubemaps/cell_cityplazacube.dds" ).toString();
+	cfg.cubeMapPathHDRI = settings.value( "Settings/Render/General/Cube Map Path HDRI", "" ).toString();
 	setCacheSize( std::uint32_t( cfg.meshCacheSize ) << 23 );
 	TexCache::loadSettings( settings );
 }
@@ -767,7 +768,8 @@ bool Renderer::setupProgramCE1( const NifModel * nif, Program * prog, Shape * me
 
 		// Environment Mapping
 
-		bool	hasCubeMap = ( scene->hasOption(Scene::DoCubeMapping) && scene->hasOption(Scene::DoLighting) && (lsp->hasEnvironmentMap || nifVersion >= 151) );
+		bool	forceHDRI = ( !cfg.cubeMapPathHDRI.isEmpty() && nifVersion < 151 && (lsp->pbrFlags & 1) );
+		bool	hasCubeMap = ( scene->hasOption(Scene::DoCubeMapping) && scene->hasOption(Scene::DoLighting) && (lsp->hasEnvironmentMap || nifVersion >= 151 || forceHDRI) );
 		prog->uni1i( "hasEnvMask", lsp->useEnvironmentMask );
 		float refl = ( nifVersion < 151 ? lsp->environmentReflection : 1.0f );
 		prog->uni1f( "envReflection", refl );
@@ -781,20 +783,26 @@ bool Renderer::setupProgramCE1( const NifModel * nif, Program * prog, Shape * me
 			QString	fname = bsprop->fileName( 4 );
 			const QString *	cube = &fname;
 			if ( hasCubeMap && ( fname.isEmpty() || !scene->bindCube( fname ) ) ) {
-				cube = ( nifVersion < 151 ? ( nifVersion < 128 ? &cube_sk : &cube_fo4 ) : &cfg.cubeMapPathFO76 );
+				if ( forceHDRI ) {
+					cube = &cfg.cubeMapPathHDRI;
+				} else {
+					cube = ( nifVersion < 151 ? ( nifVersion < 128 ? &cube_sk : &cube_fo4 ) : &cfg.cubeMapPathFO76 );
+				}
 				hasCubeMap = scene->bindCube( *cube );
 			}
 			if ( !hasCubeMap ) [[unlikely]]
 				scene->bindCube( grayCube, 1 );
 			fn->glUniform1i( uniCubeMap, texunit++ );
-			if ( nifVersion >= 151 && ( uniCubeMap = prog->uniLocation( "CubeMap2" ) ) >= 0 ) {
-				// Fallout 76: load second cube map for diffuse lighting
+			bool hasCubeMap2 = false;
+			if ( ( nifVersion >= 151 || forceHDRI ) && ( uniCubeMap = prog->uniLocation( "CubeMap2" ) ) >= 0 ) {
+				// Load second cube map for diffuse lighting (FO76+ or Skyrim PBR with HDRI)
 				fn->glActiveTexture( GL_TEXTURE0 + texunit );
-				hasCubeMap = hasCubeMap && scene->bindCube( *cube, 2 );
-				if ( !hasCubeMap ) [[unlikely]]
+				hasCubeMap2 = hasCubeMap && scene->bindCube( *cube, 2 );
+				if ( !hasCubeMap2 ) [[unlikely]]
 					scene->bindCube( grayCube, 1 );
 				fn->glUniform1i( uniCubeMap, texunit++ );
 			}
+			prog->uni1i( "hasCubeMap2", hasCubeMap2 );
 		}
 		prog->uni1i( "hasCubeMap", hasCubeMap );
 
@@ -1380,13 +1388,34 @@ bool Renderer::drawSkyBox( Scene * scene )
 		-1.125f, -1.125f,  1.125f,   1.125f, -1.125f,  1.125f,  -1.125f,  1.125f,  1.125f,   1.125f,  1.125f,  1.125f
 	};
 
-	if ( globalUniforms->cubeBgndMipLevel < 0 || !scene->nifModel || scene->nifModel->getBSVersion() < 151
+	if ( globalUniforms->cubeBgndMipLevel < 0 || !scene->nifModel
 		|| scene->selecting || scene->hasVisMode( Scene::VisSilhouette ) ) {
 		return false;
 	}
 
 	const NifModel *	nif = scene->nifModel;
 	quint32	bsVersion = nif->getBSVersion();
+
+	// Determine which cubemap to use
+	QString cubePath;
+	if ( bsVersion >= 170 ) {
+		cubePath = cfg.cubeMapPathSTF;
+	} else if ( bsVersion >= 151 ) {
+		cubePath = cfg.cubeMapPathFO76;
+	} else if ( !cfg.cubeMapPathHDRI.isEmpty() ) {
+		cubePath = cfg.cubeMapPathHDRI;
+	} else {
+		return false;	// no skybox for pre-FO76 without HDRI
+	}
+
+	// For user HDRI, default to sharp (mip 0) skybox unless user explicitly set a blur level
+	bool	usingHDRI = ( cubePath == cfg.cubeMapPathHDRI && !cfg.cubeMapPathHDRI.isEmpty() );
+	int	savedMipLevel = globalUniforms->cubeBgndMipLevel;
+	if ( usingHDRI && savedMipLevel == 1 ) {
+		// Default mip of 1 was designed for low-res game cubemaps; use 0 for HDRI
+		globalUniforms->cubeBgndMipLevel = 0;
+	}
+
 	Program *	prog = useProgram( "skybox.prog" );
 	if ( !prog )
 		return false;
@@ -1407,13 +1436,13 @@ bool Renderer::drawSkyBox( Scene * scene )
 	}
 	fn->glActiveTexture( GL_TEXTURE0 + texunit );
 	if ( hasCubeMap )
-		hasCubeMap = scene->bindCube( bsVersion < 170 ? cfg.cubeMapPathFO76 : cfg.cubeMapPathSTF );
+		hasCubeMap = scene->bindCube( cubePath );
 	if ( !hasCubeMap )
 		scene->bindCube( grayCube, 1 );
 	fn->glUniform1i( uniCubeMap, texunit++ );
 
 	prog->uni1i( "hasCubeMap", hasCubeMap );
-	prog->uni1b( "invertZAxis", ( bsVersion < 170 ) );
+	prog->uni1b( "invertZAxis", ( bsVersion >= 151 && bsVersion < 170 ) );
 
 	glDisable( GL_BLEND );
 	glDisable( GL_DEPTH_TEST );
@@ -1429,6 +1458,8 @@ bool Renderer::drawSkyBox( Scene * scene )
 
 	stopProgram();
 	glDepthMask( GL_TRUE );
+
+	globalUniforms->cubeBgndMipLevel = savedMipLevel;
 
 	return true;
 }

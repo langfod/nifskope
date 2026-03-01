@@ -81,6 +81,7 @@ public slots:
 	void clearCubeCache();
 	void selectF76CubeMap();
 	void selectSTFCubeMap();
+	void selectHDRI();
 	void detectMSAAMaxSamples();
 
 private:

@@ -306,6 +306,11 @@ protected:
 	GLuint texLoadDDS( const QString & filepath, GLenum & target, QByteArray & data, GLuint * id );
 	GLuint texLoadPBRCubeMap( const NifModel * nif, const QString & filepath,
 								GLenum & target, QByteArray & data, GLuint * id );
+	GLuint texLoadPBRCubeMapFromFloat( const QString & filepath,
+								GLenum & target, const FloatVector4 * imageData,
+								int imgWidth, int imgHeight, GLuint * id );
+	GLuint texLoadEXR( const QString & filepath,
+						GLenum & target, QByteArray & data, GLuint * id );
 	GLuint texLoadColor( const NifModel * nif, const QString & filepath,
 							GLenum & target, GLuint & width, GLuint & height, QByteArray & data, GLuint * id );
 	//! Load NiPixelData or NiPersistentSrcTextureRendererData from a NifModel

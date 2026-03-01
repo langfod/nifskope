@@ -5,6 +5,7 @@
 #include "nifskope.h"
 
 #include <QAction>
+#include <QMenu>
 #include <QSettings>
 
 
@@ -42,7 +43,17 @@ LightingWidget::LightingWidget( GLView * ogl, QWidget * parent ) : QWidget(paren
 	connect( ui->sldToneMapping, &QSlider::valueChanged, ogl, &GLView::setToneMapping );
 	connect( ui->btnFrontal, &QToolButton::toggled, ogl, &GLView::setFrontalLight );
 	connect( ogl, &GLView::frontalLightChanged, ui->btnFrontal, &QToolButton::setChecked );
-	connect( ui->btnLoadCubeMap, &QPushButton::clicked, ogl, &GLView::selectPBRCubeMap );
+	connect( ui->btnLoadCubeMap, &QPushButton::clicked, ogl, &GLView::selectHDRI );
+
+	ui->btnLoadCubeMap->setContextMenuPolicy( Qt::CustomContextMenu );
+	connect( ui->btnLoadCubeMap, &QWidget::customContextMenuRequested, [ogl, this]( const QPoint & pos ) {
+		QMenu menu;
+		menu.addAction( tr( "Load HDRI..." ), ogl, &GLView::selectHDRI );
+		menu.addAction( tr( "Load Game Cube Map..." ), ogl, &GLView::selectPBRCubeMap );
+		menu.addSeparator();
+		menu.addAction( tr( "Clear HDRI" ), ogl, &GLView::clearHDRI );
+		menu.exec( ui->btnLoadCubeMap->mapToGlobal( pos ) );
+	} );
 
 	// Load default settings
 	QSettings	settings;

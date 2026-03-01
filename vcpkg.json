@@ -24,6 +24,7 @@
     "harfbuzz",
     "zlib",
     "half",
+    "openexr",
     {
       "name": "qtbase",
       "features": [
@@ -37,7 +38,6 @@
         "icu",
         "jpeg",
         "network",
-        "opengl",
         "openssl",
         "pcre2",
         "png",
@@ -48,14 +48,12 @@
         "testlib",
         "thread",
         "widgets",
-        "zstd"
+        "zstd",
+        "concurrent"
       ]
     },
     { "name": "qttools", "features": ["designer", "linguist"] },
-    {
-      "name": "qt5compat",
-      "features": ["big-codecs", "codecs", "qml", "textcodec"]
-    },
+
     "qtdeclarative",
     "qtlanguageserver",
     "qtshadertools",

@@ -1078,6 +1078,58 @@
                </property>
               </widget>
              </item>
+             <item row="7" column="0">
+              <widget class="QLabel" name="lblCubeMapPathHDRI">
+               <property name="maximumSize">
+                <size>
+                 <width>280</width>
+                 <height>26</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>HDRI Environment Map</string>
+               </property>
+               <property name="buddy">
+                <cstring>cubeMapPathHDRI</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="7" column="1" colspan="2">
+              <widget class="QLineEdit" name="cubeMapPathHDRI">
+               <property name="minimumSize">
+                <size>
+                 <width>400</width>
+                 <height>24</height>
+                </size>
+               </property>
+               <property name="placeholderText">
+                <string>No HDRI selected (uses default lighting)</string>
+               </property>
+              </widget>
+             </item>
+             <item row="7" column="3">
+              <widget class="QPushButton" name="btnLoadHDRI">
+               <property name="maximumSize">
+                <size>
+                 <width>28</width>
+                 <height>26</height>
+                </size>
+               </property>
+               <property name="text">
+                <string/>
+               </property>
+               <property name="icon">
+                <iconset resource="../../../res/nifskope.qrc">
+                 <normaloff>:/btn/load</normaloff>:/btn/load</iconset>
+               </property>
+               <property name="iconSize">
+                <size>
+                 <width>20</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </widget>
+             </item>
             </layout>
            </widget>
           </item>

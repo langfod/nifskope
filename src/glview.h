@@ -166,6 +166,8 @@ public slots:
 	void updateSettings();
 	void update3D();
 	void selectPBRCubeMap();
+	void selectHDRI();
+	void clearHDRI();
 	void update_GL( [[maybe_unused]] int tmp ) { update(); }
 
 signals:

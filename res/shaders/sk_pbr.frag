@@ -47,6 +47,7 @@ uniform sampler2D LightMask;
 uniform sampler2D BacklightMap;
 uniform sampler2D EnvironmentMap;
 uniform samplerCube CubeMap;
+uniform samplerCube CubeMap2;
 
 uniform vec3 subsurfaceColor;
 uniform float thickness;
@@ -87,6 +88,7 @@ uniform bool hasBacklight;
 uniform bool hasRimlight;
 uniform bool hasTintColor;
 uniform bool hasCubeMap;
+uniform bool hasCubeMap2;
 uniform bool hasEnvMask;
 
 uniform float lightingEffect1;
@@ -395,7 +397,14 @@ void main()
 	// ---- Indirect Lighting ----
 
 	// Diffuse ambient
-	vec3 indirectDiffuse = baseColor * ambientLight * ao;
+	vec3 diffuseIrradiance;
+	if ( hasCubeMap2 ) {
+		vec3 normalWS = envMapRotation * normal;
+		diffuseIrradiance = texture( CubeMap2, normalWS ).rgb;
+	} else {
+		diffuseIrradiance = ambientLight;
+	}
+	vec3 indirectDiffuse = baseColor * diffuseIrradiance * ao;
 
 	// Specular ambient (env BRDF approximation)
 	vec3 specularLobeWeight = f0 * specularBRDF.x + specularBRDF.y;
@@ -410,8 +419,10 @@ void main()
 	if ( hasCubeMap ) {
 		vec3 R = reflect( -V, normal );
 		vec3 reflectedWS = envMapRotation * R;
-		vec4 cube = texture( CubeMap, reflectedWS );
-		indirectSpecular += cube.rgb * envReflection * specularLobeWeight * specAO;
+		// Select mip level from pre-filtered cubemap (7 levels, 0=mirror, 6=rough)
+		float mipLevel = roughness * 6.0;
+		vec3 cubeColor = textureLod( CubeMap, reflectedWS, mipLevel ).rgb;
+		indirectSpecular += cubeColor * envReflection * specularLobeWeight * specAO;
 	} else {
 		// Fallback: use ambient as crude environment reflection for metals
 		// Without this, metallic surfaces appear black since they have no diffuse
@@ -485,7 +496,14 @@ void main()
 
 		// Coat specular ambient
 		vec2 coatBRDF = EnvBRDFApproxLazarov(coatR, NdotV);
-		indirectSpecular += (coatF0 * coatBRDF.x + coatBRDF.y) * coatStrength * ambientLight * specAO;
+		vec3 coatAmbient = ambientLight;
+		if ( hasCubeMap ) {
+			vec3 coatR_dir = reflect( -V, normal );
+			vec3 coatReflectedWS = envMapRotation * coatR_dir;
+			float coatMipLevel = coatR * 6.0;
+			coatAmbient = textureLod( CubeMap, coatReflectedWS, coatMipLevel ).rgb * envReflection;
+		}
+		indirectSpecular += (coatF0 * coatBRDF.x + coatBRDF.y) * coatStrength * coatAmbient * specAO;
 
 		// Colored coat diffuse (flag bit 4)
 		if ( (pbrFlags & 16) != 0 ) {
